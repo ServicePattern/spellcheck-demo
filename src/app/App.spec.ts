@@ -18,7 +18,7 @@ test('a settings change reaches the next request and keeps the typed text', asyn
   await demo.field.click();
   await page.keyboard.type('Hi');
   await expect.poll(() => demo.spellCheckMessages.length).toBe(1);
-  expect(demo.spellCheckMessages[0]).toContain('Daniel Haddad');
+  expect(demo.spellCheckMessages[0]).toBe('Draft:\nHi‸');
 
   await page.getByRole('button', { name: 'Arabic' }).click();
   await expect(page.getByLabel('Custom dictionary')).toHaveValue('أبشر\nمدد');
