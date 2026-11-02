@@ -6,12 +6,12 @@ export const API_ROUTES: Record<LLMRequestKind, string> = {
 };
 
 export const apiLLMClient: LLMClient = {
-  async ask(messages, signal, requestKind) {
+  async ask(userMessage, signal, requestKind) {
     try {
       const response = await fetch(API_ROUTES[requestKind], {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages }),
+        body: JSON.stringify({ userMessage }),
         signal,
       });
       const body = (await response.json().catch(() => ({}))) as Partial<{ answer: string, error: string }>;

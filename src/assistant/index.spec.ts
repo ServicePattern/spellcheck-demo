@@ -120,8 +120,8 @@ test('the auto-completion stays when a later spell check answer auto-corrects a 
   const { editorControl, memory } = createTextEditorControl('I will sen the form');
   let answerSpellCheck = () => {};
   const llmClient: LLMClient = {
-    ask: (messages) => {
-      return messages.at(-1)!.content.includes('Complete the draft at ‸')
+    ask: (userMessage) => {
+      return userMessage.includes('Complete the draft at ‸')
         ? Promise.resolve({ answer: JSON.stringify({ nextSentence: ' today.' }) })
         : new Promise((resolve) => {
             answerSpellCheck = () => resolve({
@@ -159,8 +159,8 @@ test('the auto-completion shows as soon as it arrives, even when the spell check
   const { editorControl } = createTextEditorControl('Your request was received');
   let failSpellCheck = () => {};
   const llmClient: LLMClient = {
-    ask: (messages) => {
-      return messages.at(-1)!.content.includes('Complete the draft at ‸')
+    ask: (userMessage) => {
+      return userMessage.includes('Complete the draft at ‸')
         ? Promise.resolve({ answer: JSON.stringify({ nextSentence: ' and will be done.' }) })
         : new Promise((resolve) => {
             failSpellCheck = () => resolve({ error: 'timed out' });

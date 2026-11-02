@@ -3,7 +3,7 @@ import * as checkWhileTyping from './check-while-typing';
 import { hideAutoCompletion } from './auto-completion';
 import * as spellCheck from './spell-check';
 
-export type { AssistantOptions, AssistantState, AssistantEvent, ChatMessage, DebugArea, EditorControl, LLMClient, LLMRequestKind, LLMResult, AutoCompletionState, KeyPress, PopoverState, TextDirection, TextInput, TextSpan } from './types';
+export type { AssistantOptions, AssistantState, AssistantEvent, DebugArea, EditorControl, LLMClient, LLMRequestKind, LLMResult, AutoCompletionState, KeyPress, PopoverState, TextDirection, TextInput, TextSpan } from './types';
 export { INITIAL_STATE } from './types';
 export type Assistant = ReturnType<typeof createAssistant>;
 

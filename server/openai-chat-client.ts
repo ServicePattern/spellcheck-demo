@@ -1,4 +1,16 @@
-import type { LLMClient } from '../src/assistant/types.ts';
+import type { LLMClient, LLMRequestKind } from '../src/assistant/types.ts';
+import { AUTO_COMPLETION_EXAMPLES, AUTO_COMPLETION_SYSTEM_MESSAGE } from './auto-completion-prompt.ts';
+import { SPELL_CHECK_EXAMPLES, SPELL_CHECK_SYSTEM_MESSAGE } from './spell-check-prompt.ts';
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+const PROMPTS: Record<LLMRequestKind, ChatMessage[]> = {
+  'spell-check': [{ role: 'system', content: SPELL_CHECK_SYSTEM_MESSAGE }, ...SPELL_CHECK_EXAMPLES],
+  'auto-completion': [{ role: 'system', content: AUTO_COMPLETION_SYSTEM_MESSAGE }, ...AUTO_COMPLETION_EXAMPLES],
+};
 
 interface ChatCompletion {
   choices?: { message?: { content?: string | null } }[];
@@ -7,7 +19,8 @@ interface ChatCompletion {
 
 export function createOpenAIChatClient(apiKey: string, model: string, url: string): LLMClient {
   const llmClient: LLMClient = {
-    async ask(messages, signal) {
+    async ask(userMessage, signal, requestKind) {
+      const messages: ChatMessage[] = [...PROMPTS[requestKind], { role: 'user', content: userMessage }];
       try {
         const response = await fetch(url, {
           method: 'POST',

@@ -2,12 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { parseArgs } from 'node:util';
 import type { Mistake } from '../../src/assistant/llm.ts';
-import type { ChatMessage } from '../../src/assistant/types.ts';
 
 resolveExtensionlessImportsAsTs();
 
 const { buildSpellCheckMessage, parseMistakes } = await import('../../src/assistant/llm.ts');
-const { SPELL_CHECK_EXAMPLES, SPELL_CHECK_SYSTEM_MESSAGE } = await import('../../src/assistant/spell-check-prompt.ts');
 const { PRESETS } = await import('../../src/app/lib/presets.ts');
 const { createOpenAIChatClient } = await import('../../server/openai-chat-client.ts');
 
@@ -85,13 +83,8 @@ async function runCase(evalCase: EvalCase): Promise<RunResult> {
     llmContext: preset.llmContext,
     customDictionary: preset.customDictionary,
   });
-  const messages: ChatMessage[] = [
-    { role: 'system', content: SPELL_CHECK_SYSTEM_MESSAGE },
-    ...SPELL_CHECK_EXAMPLES,
-    { role: 'user', content: userMessage },
-  ];
   const startedAt = performance.now();
-  const reply = await llmClient.ask(messages, AbortSignal.timeout(LLM_TIMEOUT_MS), 'spell-check');
+  const reply = await llmClient.ask(userMessage, AbortSignal.timeout(LLM_TIMEOUT_MS), 'spell-check');
   const ms = Math.round(performance.now() - startedAt);
   const empty: RunResult = {
     caseName: evalCase.name,

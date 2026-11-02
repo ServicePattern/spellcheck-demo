@@ -1,4 +1,4 @@
-import type { ChatMessage } from './types';
+import type { ChatMessage } from './openai-chat-client.ts';
 
 export const SPELL_CHECK_SYSTEM_MESSAGE = `
 You help the writer proofread a message they are writing. The context before the draft, when given, says who the writer is and who they write to.

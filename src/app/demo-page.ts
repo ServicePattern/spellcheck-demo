@@ -17,8 +17,8 @@ export async function openDemoPage(page: Page, answerFor: (draft: string) => Fak
   const spellCheckMessages: string[] = [];
   const autoCompletionMessages: string[] = [];
   await page.route('**/api/**', async (route) => {
-    const body = JSON.parse(route.request().postData() ?? '{}') as { messages: { content: string }[] };
-    const userMessage = body.messages.at(-1)!.content;
+    const body = JSON.parse(route.request().postData() ?? '{}') as { userMessage: string };
+    const userMessage = body.userMessage;
     userMessages.push(userMessage);
     (route.request().url().endsWith(API_ROUTES['auto-completion']) ? autoCompletionMessages : spellCheckMessages).push(userMessage);
     const draft = draftOf(userMessage);

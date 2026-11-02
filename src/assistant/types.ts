@@ -19,17 +19,12 @@ export interface EditorControl {
   showAutoCorrectedWords(spans: TextSpan[]): void;
 }
 
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
 export type LLMResult<T> = { answer: T } | { error: string };
 
 export type LLMRequestKind = 'spell-check' | 'auto-completion';
 
 export interface LLMClient {
-  ask(messages: ChatMessage[], signal: AbortSignal, requestKind: LLMRequestKind): Promise<LLMResult<string>>;
+  ask(userMessage: string, signal: AbortSignal, requestKind: LLMRequestKind): Promise<LLMResult<string>>;
 }
 
 export interface KeyPress {

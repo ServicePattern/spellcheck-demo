@@ -59,13 +59,13 @@ function serveBuiltPage(): void {
 
 function forwardToLLM(requestKind: LLMRequestKind): RequestHandler {
   return async (request, response) => {
-    const messages = (request.body as { messages?: unknown } | undefined)?.messages;
-    if (!Array.isArray(messages)) {
-      response.status(400).json({ error: 'body must be {"messages": [...]}' });
+    const userMessage = (request.body as { userMessage?: unknown } | undefined)?.userMessage;
+    if (typeof userMessage !== 'string') {
+      response.status(400).json({ error: 'body must be {"userMessage": "..."}' });
       return;
     }
     const startedAt = performance.now();
-    const result = await llmClient.ask(messages, AbortSignal.timeout(LLM_TIMEOUT_MS), requestKind);
+    const result = await llmClient.ask(userMessage, AbortSignal.timeout(LLM_TIMEOUT_MS), requestKind);
     console.log(`${requestKind}: ${'error' in result ? result.error : 'answered'} in ${Math.round(performance.now() - startedAt)} ms`);
     response.status('error' in result ? 502 : 200).json(result);
   };

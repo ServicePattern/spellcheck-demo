@@ -1,6 +1,4 @@
-import { AUTO_COMPLETION_EXAMPLES, AUTO_COMPLETION_SYSTEM_MESSAGE } from './auto-completion-prompt';
-import { SPELL_CHECK_EXAMPLES, SPELL_CHECK_SYSTEM_MESSAGE } from './spell-check-prompt';
-import type { AssistantContext, ChatMessage, LLMRequestKind, LLMResult } from './types';
+import type { AssistantContext, LLMRequestKind, LLMResult } from './types';
 
 const LLM_TIMEOUT_MS = 20000;
 
@@ -29,11 +27,7 @@ export async function spellCheckWithLLM(context: AssistantContext, request: Spel
   const userMessage = buildSpellCheckMessage(request);
   context.debug('llm', 'spell check: request', { draft: request.draft, userMessage });
 
-  const reply = await askWithTimeout(context, [
-    { role: 'system', content: SPELL_CHECK_SYSTEM_MESSAGE },
-    ...SPELL_CHECK_EXAMPLES,
-    { role: 'user', content: userMessage }
-  ], signal, 'spell-check');
+  const reply = await askWithTimeout(context, userMessage, signal, 'spell-check');
   context.debug('llm', 'spell check: raw reply', reply);
 
   if ('error' in reply) {
@@ -46,10 +40,7 @@ export async function spellCheckWithLLM(context: AssistantContext, request: Spel
 export async function autoCompleteWithLLM(context: AssistantContext, request: AutoCompletionRequest, signal: AbortSignal): Promise<LLMResult<string>> {
   const userMessage = buildAutoCompletionMessage(request);
   context.debug('llm', 'auto-completion: request', { draft: request.draft, userMessage });
-  const reply = await askWithTimeout(context, [
-    { role: 'system', content: AUTO_COMPLETION_SYSTEM_MESSAGE },
-    ...AUTO_COMPLETION_EXAMPLES, { role: 'user', content: userMessage }
-  ], signal, 'auto-completion');
+  const reply = await askWithTimeout(context, userMessage, signal, 'auto-completion');
   context.debug('llm', 'auto-completion: raw reply', reply);
   if ('error' in reply) {
     return reply;
@@ -58,10 +49,10 @@ export async function autoCompleteWithLLM(context: AssistantContext, request: Au
   return autoCompletion === null ? { error: `unreadable answer: ${reply.answer}` } : { answer: autoCompletion };
 }
 
-async function askWithTimeout(context: AssistantContext, messages: ChatMessage[], signal: AbortSignal, requestKind: LLMRequestKind): Promise<LLMResult<string>> {
+async function askWithTimeout(context: AssistantContext, userMessage: string, signal: AbortSignal, requestKind: LLMRequestKind): Promise<LLMResult<string>> {
   const startedAt = performance.now();
   try {
-    const reply = await context.options.llmClient.ask(messages, AbortSignal.any([signal, AbortSignal.timeout(LLM_TIMEOUT_MS)]), requestKind);
+    const reply = await context.options.llmClient.ask(userMessage, AbortSignal.any([signal, AbortSignal.timeout(LLM_TIMEOUT_MS)]), requestKind);
     context.debug('llm', `${'error' in reply ? 'failed' : 'answered'} after ${Math.round(performance.now() - startedAt)} ms`);
     return reply;
   } catch (error) {
