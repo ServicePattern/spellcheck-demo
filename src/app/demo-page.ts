@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test';
 import type { Mistake } from '../assistant/llm';
-import { DEBOUNCE_MS } from './hooks/useAssistant';
+import { THROTTLE_MS } from './hooks/useAssistant';
 import { API_ROUTES } from './lib/llm-client';
 
 export interface FakeAnswer {
@@ -50,6 +50,6 @@ export async function openDemoPage(page: Page, answerFor: (draft: string) => Fak
     autoCompletionMessages,
     spellCheckDrafts: () => spellCheckMessages.map(draftOf),
     autoCompletionDrafts: () => autoCompletionMessages.map(draftOf),
-    waitPastDebounce: () => page.waitForTimeout(DEBOUNCE_MS * 1.5),
+    waitPastThrottle: () => page.waitForTimeout(THROTTLE_MS * 1.5),
   };
 }

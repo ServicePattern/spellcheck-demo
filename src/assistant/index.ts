@@ -60,7 +60,7 @@ export function createAssistant(editorControl: EditorControl, options: Assistant
       undoneAutoCorrections: [],
     },
     typing: {
-      debounceStartedAt: 0,
+      throttleStartedAt: 0,
       lastSentText: '',
       isComposing: false,
     },

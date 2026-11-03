@@ -40,7 +40,7 @@ test('clearing the field clears the request status and sends no request', async 
   await page.keyboard.press('ControlOrMeta+a');
   await page.keyboard.press('Backspace');
   await expect(page.getByRole('status')).toHaveText('');
-  await demo.waitPastDebounce();
+  await demo.waitPastThrottle();
   expect(demo.userMessages).toHaveLength(0);
 });
 

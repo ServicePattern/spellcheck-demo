@@ -9,7 +9,7 @@
   background-color: rgba(43, 108, 176, 0.18);
 }
 
-@keyframes debounce-ring {
+@keyframes throttle-ring {
   to {
     stroke-dashoffset: 0;
   }
