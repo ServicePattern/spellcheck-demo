@@ -39,7 +39,7 @@ export function MessageField() {
             {state.requestStatus?.kind === 'throttle' ? (
               <>
                 <ThrottleRing key={state.requestStatus.startedAt} durationMs={state.requestStatus.durationMs} />
-                Waiting for you to stop typing…
+                Timeout before the request…
               </>
             ) : state.requestStatus?.kind === 'request' ? (
               <>
