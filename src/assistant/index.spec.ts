@@ -216,3 +216,40 @@ test('typing during the throttle does not restart it, and a change during a requ
   expect(sentDrafts).toEqual(['Hello t', 'Hello the']);
   assistant.release();
 });
+
+test('a mistake stays underlined when a later answer omits it, unless the caret is in the word', async () => {
+  const { editorControl, memory } = createTextEditorControl('Dear asa, thank you for contacting a');
+  const asa = {
+    word: 'asa',
+    context: 'Dear asa,',
+    fixes: ['Sasha'],
+    sure: false,
+  };
+  const a = {
+    word: 'a',
+    context: 'contacting a',
+    fixes: ['us'],
+    sure: false,
+  };
+  const answers = [{ mistakes: [asa, a] }, { mistakes: [] }];
+  const llmClient: LLMClient = {
+    ask: async () => ({ answer: JSON.stringify(answers.shift()) }),
+  };
+  const assistant = startAssistant(editorControl, { mistakes: [], nextSentence: '' }, {
+    llmClient,
+    spellCheckMode: 'underline',
+    withAutoCompletion: false,
+  });
+  const underlinedWords = () => memory.underlines.map((span) => memory.text.slice(span.start, span.end));
+
+  assistant.handleInput({ inputType: 'insertText', data: 'a' });
+  await expect.poll(underlinedWords).toEqual(['asa', 'a']);
+
+  memory.text = 'Dear asa, thank you for contacting a ';
+  memory.caret = memory.text.length;
+  assistant.handleInput({ inputType: 'insertText', data: ' ' });
+  await expect.poll(() => answers.length).toBe(0);
+  await expect.poll(() => assistant.getState().requestStatus).toBeUndefined();
+  expect(underlinedWords()).toEqual(['asa']);
+  assistant.release();
+});

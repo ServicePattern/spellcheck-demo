@@ -156,7 +156,7 @@ async function askSpellCheck(context: AssistantContext, expected: ExpectedField,
     return false;
   }
   const wasUntouched = isUntouched(context, expected);
-  displayAndAutoCorrectMistakes(context, result.answer);
+  displayAndAutoCorrectMistakes(context, result.answer, expected);
   if (wasUntouched) {
     expected.text = context.editorControl.getText();
     expected.caret = context.editorControl.getCaret();

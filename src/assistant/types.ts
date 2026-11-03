@@ -92,6 +92,7 @@ export interface AssistantOptions {
 
 export interface SpellCheckData {
   mistakes: Mistake[];
+  mistakesOnFinishedWords: Mistake[];
   fixByOriginal: Map<string, string>;
   undoneAutoCorrections: { original: string; fix: string }[];
   openPopover?: { place: PlacedMistake; caretBefore?: number };

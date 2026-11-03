@@ -56,6 +56,7 @@ export function createAssistant(editorControl: EditorControl, options: Assistant
     customDictionary: new Set(options.customDictionary),
     spellCheck: {
       mistakes: [],
+      mistakesOnFinishedWords: [],
       fixByOriginal: new Map(),
       undoneAutoCorrections: [],
     },

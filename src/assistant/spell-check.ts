@@ -22,8 +22,15 @@ function finishedMistakePlaces(context: AssistantContext): PlacedMistake[] {
   return mistakePlaces(context, text).filter((place) => place.end !== caret && isFollowedByBoundary(place));
 }
 
-export function displayAndAutoCorrectMistakes(context: AssistantContext, newMistakes: Mistake[]) {
-  context.spellCheck.mistakes = newMistakes;
+export interface SentDraft {
+  text: string;
+  caret: number | undefined;
+}
+
+export function displayAndAutoCorrectMistakes(context: AssistantContext, newMistakes: Mistake[], sentDraft: SentDraft) {
+  const keptMistakes = findEarlierMistakesToKeep(context, newMistakes);
+  context.spellCheck.mistakes = [...newMistakes, ...keptMistakes];
+  context.spellCheck.mistakesOnFinishedWords = [...findMistakesOnFinishedWords(newMistakes, sentDraft), ...keptMistakes];
   const placed = findMistakesInText(context.editorControl.getText(), newMistakes);
   const notFound = newMistakes.filter((mistake) => !placed.some((place) => place.mistake === mistake));
   context.debug('spell-check', `model reported ${newMistakes.length} mistake(s); ${placed.length} place(s) found in the field`, placed.map((place) => `${place.word} @${place.start} → ${place.mistake.fixes.join(' / ')}${place.mistake.isSure ? ' (sure)' : ''}`));
@@ -36,6 +43,23 @@ export function displayAndAutoCorrectMistakes(context: AssistantContext, newMist
     context.debug('spell-check', 'auto-correction is off: mistakes are only underlined');
   }
   redrawUnderlines(context);
+}
+
+function findMistakesOnFinishedWords(newMistakes: Mistake[], sentDraft: SentDraft): Mistake[] {
+  const isWordAtCaret = (place: PlacedMistake) => sentDraft.caret !== undefined && place.start <= sentDraft.caret && sentDraft.caret <= place.end;
+  const finishedPlaces = findMistakesInText(sentDraft.text, newMistakes).filter((place) => !isWordAtCaret(place));
+  return [...new Set(finishedPlaces.map((place) => place.mistake))];
+}
+
+function findEarlierMistakesToKeep(context: AssistantContext, newMistakes: Mistake[]): Mistake[] {
+  const text = context.editorControl.getText();
+  const newPlaces = findMistakesInText(text, newMistakes);
+  const isReportedAgain = (place: PlacedMistake) => newPlaces.some((newPlace) => newPlace.start === place.start && newPlace.end === place.end);
+  const keptPlaces = findMistakesInText(text, context.spellCheck.mistakesOnFinishedWords).filter((place) => !isReportedAgain(place));
+  if (keptPlaces.length) {
+    context.debug('spell-check', `${keptPlaces.length} mistake(s) kept from the earlier answers: the model did not report them again, but the word was finished when it was reported and is still unchanged`, keptPlaces.map((place) => `${place.word} @${place.start}`));
+  }
+  return [...new Set(keptPlaces.map((place) => place.mistake))];
 }
 
 export function redrawUnderlines(context: AssistantContext) {
