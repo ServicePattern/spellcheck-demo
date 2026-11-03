@@ -1,5 +1,6 @@
 import { expect, type Page } from '@playwright/test';
 import type { Mistake } from '../assistant/llm';
+import { DEBOUNCE_MS } from './hooks/useAssistant';
 import { API_ROUTES } from './lib/llm-client';
 
 export interface FakeAnswer {
@@ -8,7 +9,6 @@ export interface FakeAnswer {
 }
 
 export const ACCEPT_WORD_KEY = process.platform === 'darwin' ? 'Alt+ArrowRight' : 'Control+ArrowRight';
-export const DEBOUNCE_MS = 1000;
 
 const draftOf = (userMessage: string) => userMessage.split("Draft:\n")[1].split('\n\nComplete the draft')[0];
 

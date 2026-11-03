@@ -7,7 +7,7 @@ import { lines } from '../lib/settings';
 import { useDebugger } from '../providers/DebuggerProvider';
 import { useSettings } from '../providers/SettingsProvider';
 
-const DEBOUNCE_MS = 1000;
+export const DEBOUNCE_MS = 1000;
 
 const noSubscription = () => () => {};
 const initialState = () => INITIAL_STATE;
