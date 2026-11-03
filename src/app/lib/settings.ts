@@ -1,4 +1,4 @@
-import type { Preset } from './presets';
+import { PRESETS, type Preset } from './presets';
 
 export interface AppSettings {
   withSpellCheck: boolean;
@@ -21,9 +21,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   withSpellCheck: true,
   withAutoCorrection: true,
   withAutoCompletion: true,
-  llmContext: '',
-  customDictionary: '',
-  ignoredWords: '',
+  ...presetSettings(PRESETS.English),
 };
 
 export const lines = (text: string) => text.split('\n').map((line) => line.trim()).filter(Boolean);
