@@ -11,4 +11,4 @@ playwright-report/
 .vite/
 
 .env
-
+LOCAL.txt
