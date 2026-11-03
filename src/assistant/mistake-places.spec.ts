@@ -54,3 +54,14 @@ test('findMistakesInText matches any spaces in the context: a line break, severa
   const text = 'в течение слевдвших 3 дней, и в течение\u00A0 слевдвших \n3 рабочих дней';
   expect(findMistakesInText(text, [following]).map((place) => place.start)).toEqual([10, 41]);
 });
+
+test('findMistakesInText does not place a mistake inside a longer word, even when the context matches', () => {
+  const hav: Mistake = {
+    word: 'hav',
+    surroundingText: 'WE hav',
+    fixes: ['have'],
+    isSure: true,
+  };
+  expect(findMistakesInText('WE have checked', [hav])).toEqual([]);
+  expect(findMistakesInText('WE hav checked', [hav]).map((place) => place.start)).toEqual([3]);
+});
