@@ -7,7 +7,7 @@ import { lines } from '../lib/settings';
 import { useDebugger } from '../providers/DebuggerProvider';
 import { useSettings } from '../providers/SettingsProvider';
 
-export const THROTTLE_MS = 1000;
+export const DEBOUNCE_MS = 1000;
 
 const noSubscription = () => () => {};
 const initialState = () => INITIAL_STATE;
@@ -28,7 +28,7 @@ export function useAssistant(fieldRef: RefObject<HTMLElement | null>) {
       onCustomDictionaryChange: (words) => updateSettings({ customDictionary: words.join('\n') }),
       withAutoCompletion: settings.withAutoCompletion,
       isMac,
-      throttleMs: THROTTLE_MS,
+      debounceMs: DEBOUNCE_MS,
       llmClient: apiLLMClient,
       llmContext: settings.llmContext,
       onEvent,

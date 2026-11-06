@@ -23,7 +23,7 @@ test('typing what the auto-completion says or accepting one word keeps the rest,
   await expect.poll(demo.autoCompletionText).toBe(' will be done.');
   await page.keyboard.type(' will');
   await expect.poll(demo.autoCompletionText).toBe(' be done.');
-  await demo.waitPastThrottle();
+  await demo.waitPastDebounce();
   expect(demo.autoCompletionMessages).toHaveLength(1);
 });
 
@@ -53,7 +53,7 @@ test('Enter moves the auto-completion to the new line without its leading space,
   await page.keyboard.press('Enter');
   await page.keyboard.press(ACCEPT_WORD_KEY);
   await expect.poll(demo.autoCompletionText).toBe(' request has been received.');
-  await demo.waitPastThrottle();
+  await demo.waitPastDebounce();
   expect(demo.autoCompletionMessages).toHaveLength(1);
 });
 
@@ -87,12 +87,12 @@ test('no auto-completion is asked for with text after the caret on its line', as
   expect(demo.autoCompletionMessages).toHaveLength(1);
 });
 
-test('Escape while the throttle runs cancels the request', async ({ page }) => {
+test('Escape while the debounce runs cancels the request', async ({ page }) => {
   const demo = await openDemoPage(page, autoCompletionAfterReceived);
   await demo.field.click();
   await page.keyboard.type('Your request was received');
   await page.keyboard.press('Escape');
-  await demo.waitPastThrottle();
+  await demo.waitPastDebounce();
   expect(demo.userMessages).toHaveLength(0);
   await expect.poll(demo.autoCompletionText).toBe(null);
 });

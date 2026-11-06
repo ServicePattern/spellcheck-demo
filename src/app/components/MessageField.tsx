@@ -4,7 +4,7 @@ import { useAssistant } from '../hooks/useAssistant';
 import { useSettings } from '../providers/SettingsProvider';
 import { AssistantToggles } from './AssistantToggles';
 import { AutoCompletionText } from './AutoCompletionText';
-import { ThrottleRing } from './ThrottleRing';
+import { DebounceRing } from './DebounceRing';
 import { FixesPopover } from './FixesPopover';
 
 export function MessageField() {
@@ -36,10 +36,10 @@ export function MessageField() {
         <div className="mr-auto flex items-center gap-2">
           <h2 className="text-lg font-semibold">Message field</h2>
           <span role="status" className="flex items-center gap-1.5 text-sm text-slate-500">
-            {state.requestStatus?.kind === 'throttle' ? (
+            {state.requestStatus?.kind === 'debounce' ? (
               <>
-                <ThrottleRing key={state.requestStatus.startedAt} durationMs={state.requestStatus.durationMs} />
-                Timeout before the request…
+                <DebounceRing key={state.requestStatus.startedAt} durationMs={state.requestStatus.durationMs} />
+                Waiting for you to stop typing…
               </>
             ) : state.requestStatus?.kind === 'request' ? (
               <>

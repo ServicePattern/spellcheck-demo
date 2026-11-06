@@ -36,11 +36,11 @@ test('clearing the field clears the request status and sends no request', async 
   const demo = await openDemoPage(page, () => ({}));
   await demo.field.click();
   await page.keyboard.type('Hi');
-  await expect(page.getByRole('status')).toHaveText('Timeout before the request…');
+  await expect(page.getByRole('status')).toHaveText('Waiting for you to stop typing…');
   await page.keyboard.press('ControlOrMeta+a');
   await page.keyboard.press('Backspace');
   await expect(page.getByRole('status')).toHaveText('');
-  await demo.waitPastThrottle();
+  await demo.waitPastDebounce();
   expect(demo.userMessages).toHaveLength(0);
 });
 

@@ -44,7 +44,7 @@ function startAssistant(editorControl: EditorControl, answer: FakeLLMAnswer, opt
     spellCheckMode: 'auto-correction',
     withAutoCompletion: true,
     isMac: false,
-    throttleMs: 10,
+    debounceMs: 10,
     customDictionary: [],
     ignoredWords: [],
     onIgnoredWordsChange: () => {},
@@ -175,45 +175,6 @@ test('the auto-completion shows as soon as it arrives, even when the spell check
   failSpellCheck();
   await expect.poll(() => assistant.getState().requestStatus).toEqual({ kind: 'failed' });
   expect(assistant.getState().autoCompletion?.text).toBe(' and will be done.');
-  assistant.release();
-});
-
-test('typing during the throttle does not restart it, and a change during a request sends one more request when it finishes', async () => {
-  const { editorControl, memory } = createTextEditorControl('Hello');
-  const sentDrafts: string[] = [];
-  let answer = () => {};
-  const llmClient: LLMClient = {
-    ask: (userMessage) => {
-      if (userMessage.includes('Complete the draft at ‸')) {
-        return Promise.resolve({ answer: JSON.stringify({ nextSentence: '' }) });
-      }
-      sentDrafts.push(editorControl.getText());
-      return new Promise((resolve) => {
-        answer = () => resolve({ answer: JSON.stringify({ mistakes: [] }) });
-      });
-    },
-  };
-  const assistant = startAssistant(editorControl, { mistakes: [], nextSentence: '' }, { llmClient, throttleMs: 100 });
-
-  assistant.handleInput({ inputType: 'insertText', data: 'o' });
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  memory.text = 'Hello t';
-  assistant.handleInput({ inputType: 'insertText', data: 't' });
-  await new Promise((resolve) => setTimeout(resolve, 70));
-  expect(sentDrafts).toEqual(['Hello t']);
-
-  memory.text = 'Hello th';
-  assistant.handleInput({ inputType: 'insertText', data: 'h' });
-  memory.text = 'Hello the';
-  assistant.handleInput({ inputType: 'insertText', data: 'e' });
-  await new Promise((resolve) => setTimeout(resolve, 80));
-  expect(sentDrafts).toEqual(['Hello t']);
-
-  answer();
-  await expect.poll(() => sentDrafts).toEqual(['Hello t', 'Hello the']);
-  answer();
-  await expect.poll(() => assistant.getState().requestStatus).toBeUndefined();
-  expect(sentDrafts).toEqual(['Hello t', 'Hello the']);
   assistant.release();
 });
 

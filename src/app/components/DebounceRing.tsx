@@ -1,4 +1,4 @@
-export function ThrottleRing({ durationMs }: { durationMs: number }) {
+export function DebounceRing({ durationMs }: { durationMs: number }) {
   const radius = 5;
   const circumference = 2 * Math.PI * radius;
   return (
@@ -12,7 +12,7 @@ export function ThrottleRing({ durationMs }: { durationMs: number }) {
         className="stroke-slate-400"
         strokeWidth="2"
         strokeDasharray={circumference}
-        style={{ strokeDashoffset: circumference, animation: `throttle-ring ${durationMs}ms linear forwards` }}
+        style={{ strokeDashoffset: circumference, animation: `debounce-ring ${durationMs}ms linear forwards` }}
       />
     </svg>
   );

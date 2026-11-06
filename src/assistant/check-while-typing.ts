@@ -10,9 +10,9 @@ function updateRequestStatus(context: AssistantContext) {
     ? { kind: 'request' }
     : context.typing.requestTimer
       ? {
-          kind: 'throttle',
-          startedAt: context.typing.throttleStartedAt,
-          durationMs: context.options.throttleMs,
+          kind: 'debounce',
+          startedAt: context.typing.debounceStartedAt,
+          durationMs: context.options.debounceMs,
         }
       : undefined;
   if (JSON.stringify(context.getState().requestStatus) === JSON.stringify(requestStatus)) {
@@ -32,7 +32,7 @@ function abortRunningRequest(context: AssistantContext, why: string) {
 
 export function cancelPendingRequest(context: AssistantContext) {
   if (context.typing.requestTimer) {
-    context.debug('typing', 'Escape: the throttle timer is cleared');
+    context.debug('typing', 'Escape: the debounce timer is cleared');
     clearTimeout(context.typing.requestTimer);
     context.typing.requestTimer = undefined;
   }
@@ -41,6 +41,7 @@ export function cancelPendingRequest(context: AssistantContext) {
 }
 
 function scheduleLLMRequest(context: AssistantContext) {
+  abortRunningRequest(context, 'text changed');
   if (context.options.spellCheckMode === 'off' && !context.options.withAutoCompletion) {
     context.debug('typing', 'spell check and auto-completion are off: no request');
     return;
@@ -53,17 +54,10 @@ function scheduleLLMRequest(context: AssistantContext) {
     updateRequestStatus(context);
     return;
   }
-  if (context.typing.runningRequest) {
-    context.debug('typing', 'a request is running: the new text goes out when it finishes');
-    return;
-  }
-  if (context.typing.requestTimer) {
-    context.debug('typing', 'typing continues: the throttle timer keeps running');
-    return;
-  }
-  context.debug('typing', `throttle timer started: request in ${context.options.throttleMs} ms`);
-  context.typing.requestTimer = setTimeout(() => void sendLLMRequest(context), context.options.throttleMs);
-  context.typing.throttleStartedAt = Date.now();
+  context.debug('typing', context.typing.requestTimer ? `typing continues: debounce timer restarted (${context.options.debounceMs} ms)` : `debounce timer started: request in ${context.options.debounceMs} ms unless typing continues`);
+  clearTimeout(context.typing.requestTimer);
+  context.typing.requestTimer = setTimeout(() => void sendLLMRequest(context), context.options.debounceMs);
+  context.typing.debounceStartedAt = Date.now();
   updateRequestStatus(context);
 }
 
@@ -77,7 +71,7 @@ async function sendLLMRequest(context: AssistantContext) {
   context.typing.lastSentText = sentText;
 
   if (!sentText.trim()) {
-    context.debug('typing', 'throttle over, but the field is empty: nothing to send');
+    context.debug('typing', 'debounce over, but the field is empty: nothing to send');
     updateRequestStatus(context);
     return;
   }
@@ -85,11 +79,11 @@ async function sendLLMRequest(context: AssistantContext) {
   const shouldSpellCheck = context.options.spellCheckMode !== 'off';
   const shouldAskAutoCompletion = canAskAutoCompletion(context, sentText, caret);
   if (!shouldSpellCheck && !shouldAskAutoCompletion) {
-    context.debug('typing', 'throttle over, but spell check is off and no auto-completion can be asked for here: nothing to send');
+    context.debug('typing', 'debounce over, but spell check is off and no auto-completion can be asked for here: nothing to send');
     updateRequestStatus(context);
     return;
   }
-  context.debug('typing', `throttle over: sending the draft (${[shouldSpellCheck && 'spell check', shouldAskAutoCompletion && 'auto-completion'].filter(Boolean).join(' + ')})`, {
+  context.debug('typing', `debounce over: sending the draft (${[shouldSpellCheck && 'spell check', shouldAskAutoCompletion && 'auto-completion'].filter(Boolean).join(' + ')})`, {
     draft: sentText,
     caret,
   });
@@ -111,12 +105,6 @@ async function sendLLMRequest(context: AssistantContext) {
   }
 
   context.typing.runningRequest = undefined;
-
-  if (context.editorControl.getText() !== expected.text) {
-    context.debug('typing', 'the text changed during the request: sending the new text');
-    void sendLLMRequest(context);
-    return;
-  }
 
   if (!isSpellCheckDone || !isAutoCompletionDone) {
     context.debug('typing', `failed: ${[!isSpellCheckDone && 'spell check', !isAutoCompletionDone && 'auto-completion'].filter(Boolean).join(' and ')}`);

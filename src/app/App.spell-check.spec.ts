@@ -32,7 +32,7 @@ test('a sure mistake is auto-corrected, Ctrl/Cmd+Z brings it back as an ignored 
   await page.keyboard.press('ControlOrMeta+Shift+z');
   await expect(demo.field).toHaveText('I will send the form');
   await expect(page.getByLabel('Ignored words')).toHaveValue('pls');
-  await demo.waitPastThrottle();
+  await demo.waitPastDebounce();
   expect(demo.spellCheckMessages).toHaveLength(1);
 });
 

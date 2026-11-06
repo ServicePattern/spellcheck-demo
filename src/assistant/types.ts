@@ -60,7 +60,7 @@ export interface AssistantState {
   autoCompletion?: AutoCompletionState;
   requestStatus?:
     | {
-        kind: 'throttle';
+        kind: 'debounce';
         startedAt: number;
         durationMs: number;
       }
@@ -81,7 +81,7 @@ export interface AssistantOptions {
   spellCheckMode: 'off' | 'underline' | 'auto-correction';
   withAutoCompletion: boolean;
   isMac: boolean;
-  throttleMs: number;
+  debounceMs: number;
   customDictionary: string[];
   ignoredWords: string[];
   onIgnoredWordsChange: (words: string[]) => void;
@@ -101,7 +101,7 @@ export interface SpellCheckData {
 export interface TypingData {
   requestTimer?: ReturnType<typeof setTimeout>;
   runningRequest?: AbortController;
-  throttleStartedAt: number;
+  debounceStartedAt: number;
   lastSentText: string;
   isComposing: boolean;
 }
