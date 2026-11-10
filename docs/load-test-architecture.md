@@ -1,6 +1,6 @@
 # Load test: loader architecture
 
-Design for a load generator that sends the demo's real traffic shape to an LLM served by vLLM on a rented vast.ai GPU. Written 2026-11-10. The core (change `load-generator`: scripts, agent, run, report, the `llm` and `fake` targets) is built; see [As built](#as-built-change-load-generator). The `server` target is built too (change `load-server-target`, see [The server target](#the-server-target-change-load-server-target)). The vLLM metrics, the probe and the cost figures are built and checked against fakes (change `vllm-metrics`, see [vLLM metrics, probe and cost](#vllm-metrics-probe-and-cost-change-vllm-metrics)); their names still need confirming on a rented instance.
+Design for a load generator that sends the demo's real traffic shape to an LLM served by vLLM on a rented vast.ai GPU. Written 2026-11-10. The core (change `load-generator`: scripts, agent, run, report, the `llm` and `fake` targets) is built; see [As built](#as-built-change-load-generator). The `server` target is built too (change `load-server-target`, see [The server target](#the-server-target-change-load-server-target)). The vLLM metrics, the probe and the cost figures are built and confirmed on a rented vLLM v0.31.0 instance (change `vllm-metrics`, see [vLLM metrics, probe and cost](#vllm-metrics-probe-and-cost-change-vllm-metrics)).
 
 ## Goal
 
@@ -365,7 +365,7 @@ npm run load -- --agents 10,25,50 --stage 180 --vllm-metrics --probe --price 1.4
 | Generation tokens | `vllm:generation_tokens_total` | sum |
 | Prefix cache queries, hits | `vllm:prefix_cache_queries_total`, `vllm:prefix_cache_hits_total` | sum |
 
-These are expected names, not yet read from a v0.31.0 instance; the report lists any not found, and the confirmation on a rented GPU fixes the table.
+All seven names were confirmed on a vLLM v0.31.0 instance on 2026-11-10; its `/metrics` output is kept as `tools/load/fixtures/vllm-0.31.0-metrics.txt` and a spec parses it. The report still lists any name a later version drops.
 
 **Probe.** With `--probe`, every 10 s one chat completion goes straight to `LLM_URL` (even with `--target server`): a one-word user message, no system message, `max_tokens: 1`, `temperature: 0`. It ends after 10 s at most, is not counted against `--max-requests`, and is in no client figure. Its round trip is network, tunnel, vLLM's queue and a tiny prefill: read it next to the stage's waiting requests before calling it distance.
 
@@ -374,6 +374,32 @@ These are expected names, not yet read from a v0.31.0 instance; the report lists
 **Dry run without a GPU** (2026-11-10): a fake vLLM on `127.0.0.1:18000` serving `/metrics` and chat completions, then `npm run load -- --agents 2 --stage 60 --warmup 10 --vllm-metrics --probe --price 1.43` with `LLM_URL` pointing at it: 30 samples, 6 probes (p50 61 ms against a client p50 of 645 ms), every metric found, $0.715 per agent-hour, nothing off the machine.
 
 **Limits.** One SSH tunnel carries the agents' requests, the samples and the probes. Samples are 2 s apart on the loader's clock and rates use the real seconds between them. Token counts are per stage from vLLM's counters, never per request. The probe and the sampler add one tiny request every 10 s and one `/metrics` read every 2 s; the report says they ran.
+
+### Confirmation on a rented GPU (2026-11-10)
+
+`google/gemma-4-26B-A4B-it` on vLLM v0.31.0 (`vllm/vllm-openai:v0.31.0`, 8,192-token context, thinking off), one RTX PRO 6000 WS (96 GB, Washington, US, on demand at $1.5744/h), through the SSH tunnel from California, rented with `../SpellCheckingPrototype/deploy/vastai/start.sh`. `check.sh` before the run: round trip 781 ms, 79 tokens/s on a 64-token generation.
+
+- **Metric names:** all seven expected names exist (`vllm:num_requests_running`, `vllm:num_requests_waiting`, `vllm:kv_cache_usage_perc`, `vllm:prompt_tokens_total`, `vllm:generation_tokens_total`, `vllm:prefix_cache_queries_total`, `vllm:prefix_cache_hits_total`); the table needed no change. Fixture: `tools/load/fixtures/vllm-0.31.0-metrics.txt`.
+- **Context-length wording:** HTTP 400, `This model's maximum context length is 8192 tokens. However, you requested 5 output tokens and your prompt contains at least 8188 input tokens, …`; the pattern matches. Fixture: `tools/load/fixtures/vllm-0.31.0-context-length.json`.
+- **Short run:** `npm run load -- --agents 3 --stage 120 --warmup 20 --vllm-metrics --probe --price 1.5744 --max-requests 200`, target `llm` straight to vLLM, seed 1 (agents 1 and 2 Arabic, 3 English), every typing input at its default (assumed, not measured: `--debounce-ms 1000`, `--timeout-ms 20000`, `--wpm 40`, `--burst-words 3`, `--pause-ms 1800`, `--accept-share 0.26`, `--spell-check-only-share 0.1`, `--typo-every 15`, `--between-messages-ms 20000`, `--arabic-share 0.5`).
+
+| Stage | Agents | Requests | Rounds/s | Useful answers | Aborted | Timeout | Failed | Unreadable | Context too long | p50 ms | p95 ms | p99 ms | In flight mean | In flight max |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 3 | 62 | 0.32 | 85.5% | 14.5% | 0.0% | 0.0% | 0.0% | 0.0% | 269 | 600 | 953 | 0.2 | 6 |
+
+| Stage | Samples | Failed | Running mean / max | Waiting mean / max | Cache mean / max | Prompt tokens/s | Generation tokens/s | Prefix cache hit rate | Probe p50 / p95 ms | Cost per agent-hour |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 50 | 0 | 0.1 / 3 | 0 / 0 | 0.1% / 1.9% | 1090.6 | 6.7 | 90.9% | 137 / 153 | $0.525 |
+
+**Money:** `status.sh` showed $0.12 spent 6 minutes after the start; the instance was destroyed about 20 minutes after renting, so roughly $0.30 to $0.50 with the time to start (storage and bandwidth are billed apart; the account's billing page has the invoice). `status.sh` afterwards: no instance running.
+
+What it showed about the loader, not capacity:
+
+- **Sampler, probe and report work against the real instance:** every metric found, 60 samples with none failed, 10 probes all answered, no key in the run folder.
+- **At this load the instance is idle most of the time.** Requests are short (269 ms p50), so a 2 s sample catches them rarely (running above 0 in 4 of 60 samples); the running mean (0.1) is a sampled gauge and noisy at low load, and the client's own in-flight mean (0.2) is the better figure there. Queues will matter at the loads `first-capacity-run` applies.
+- **The probe splits the latency:** a one-token request takes 137 ms at the median, against 269 ms for an agent's request, so about half of a request's time at this load is network, tunnel and scheduling rather than generation.
+- **The prefix cache serves 91% of prompt tokens:** the system message, examples and context are shared across requests, which is what makes a 3,500-token prompt cheap to repeat.
+- **A fast model raises the useful share:** 85.5%, against 54 to 64% on Gemini with the same typing; every aborted request here had at most 173 ms of allowed time.
 
 ## Running it
 

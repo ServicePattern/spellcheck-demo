@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import type { Outcome } from './agent.ts';
 import type { RequestRecord } from './recorder.ts';
 import {
   computeReport,
+  isContextLengthRejection,
   renderJson,
   renderMarkdown,
   type ActivityEvent,
@@ -727,4 +729,12 @@ test('every vLLM, probe and cost figure in report.md matches report.json', () =>
   }
   expect(json.stages[0].vllm?.promptTokensPerSecond).toBe(3000);
   expect(markdown).toContain('Metrics not found: prefixCacheQueries.');
+});
+
+test('vLLM v0.31.0 context-length error, as served by a real instance, is counted as a context-length rejection', () => {
+  const fixture = new URL('./fixtures/vllm-0.31.0-context-length.json', import.meta.url);
+  const body = JSON.parse(readFileSync(fixture, 'utf8')) as { error: { message: string } };
+  const failed = record('failed', { reason: 'HTTP 400: ' + body.error.message });
+  expect(isContextLengthRejection(failed)).toBe(true);
+  expect(isContextLengthRejection(record('failed', { reason: 'HTTP 429: rate limited' }))).toBe(false);
 });

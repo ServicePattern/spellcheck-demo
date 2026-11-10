@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { createVirtualClock, type Clock } from './clock.ts';
 import {
@@ -109,4 +110,20 @@ test('the read before the run stops it when the endpoint has no vLLM metrics, na
     'prefixCacheQueries',
     'prefixCacheHits',
   ]);
+});
+
+test('vLLM v0.31.0 metrics, as served by a real instance, give every value by the expected names', () => {
+  const text = readFileSync(new URL('./fixtures/vllm-0.31.0-metrics.txt', import.meta.url), 'utf8');
+  const reading = readMetricValues(text);
+  expect(reading.notFound).toEqual([]);
+  expect(reading.namesUsed).toEqual({
+    running: 'vllm:num_requests_running',
+    waiting: 'vllm:num_requests_waiting',
+    cacheUsage: 'vllm:kv_cache_usage_perc',
+    promptTokens: 'vllm:prompt_tokens_total',
+    generationTokens: 'vllm:generation_tokens_total',
+    prefixCacheQueries: 'vllm:prefix_cache_queries_total',
+    prefixCacheHits: 'vllm:prefix_cache_hits_total',
+  });
+  expect(reading.values.generationTokens).toBeGreaterThan(0);
 });
