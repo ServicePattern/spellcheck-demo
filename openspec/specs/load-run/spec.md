@@ -25,8 +25,9 @@ Runs a load test from one command: applies the simulated agents to a target in s
 | `--metrics-url` | `/metrics` on the origin of `LLM_URL` | Where vLLM's metrics are read |
 | `--probe` | off | Send a one-token probe straight to `LLM_URL` every 10 s |
 | `--price` | none | Hourly price of the instance in dollars, for the cost per agent-hour |
+| `--gpu-ssh` | none | `<user>@<host>:<port>` of the instance, to sample its GPU with `nvidia-smi` every 2 s (see the `load-gpu` capability) |
 
-`--vllm-metrics`, `--metrics-url` and `--probe` need a target that reaches an LLM (`llm` or `server`); with `--target fake` the loader stops and names the flag. `--price` must be a positive number.
+`--vllm-metrics`, `--metrics-url` and `--probe` need a target that reaches an LLM (`llm` or `server`); with `--target fake` the loader stops and names the flag. `--price` must be a positive number. `--gpu-ssh` must have the form `<user>@<host>:<port>` with a port from 1 to 65535, and is accepted with any target.
 
 #### Scenario: Smallest run
 
@@ -57,6 +58,11 @@ Runs a load test from one command: applies the simulated agents to a target in s
 
 - **WHEN** `--price 0` or `--price abc` is given
 - **THEN** it stops naming `--price` and sends nothing
+
+#### Scenario: Bad GPU address
+
+- **WHEN** `--gpu-ssh root@73.97.224.215` is given, with no port
+- **THEN** it stops naming `--gpu-ssh` and the expected form, and sends nothing
 
 ### Requirement: Targets
 
@@ -162,7 +168,7 @@ With `--max-requests N`, the run SHALL stop when N requests have been sent: no f
 
 ### Requirement: The run folder says what was run
 
-Each run SHALL write a new folder under `--out`, named by its start time, holding the request record, the report in Markdown and JSON, and the run's facts: seed, every setting (assumed inputs included), target, model and the endpoint's host, chat sources with counts, the commit of the repository and whether it had uncommitted changes, start time and duration. With `--target server` the facts also hold the server's port, how the server ended (stopped by the loader, or exited on its own with its code), the number of requests sent with no upstream line, and every line the server printed that is not an upstream call line. With `--vllm-metrics` the folder also holds `metrics.jsonl`, one line per sample, and the facts hold the metrics URL and the metrics not found. With `--probe` the folder also holds `probe.jsonl`, one line per probe. Neither file holds the LLM key.
+Each run SHALL write a new folder under `--out`, named by its start time, holding the request record, the report in Markdown and JSON, and the run's facts: seed, every setting (assumed inputs included), target, model and the endpoint's host, chat sources with counts, the commit of the repository and whether it had uncommitted changes, start time and duration. With `--target server` the facts also hold the server's port, how the server ended (stopped by the loader, or exited on its own with its code), the number of requests sent with no upstream line, and every line the server printed that is not an upstream call line. With `--vllm-metrics` the folder also holds `metrics.jsonl`, one line per sample, and the facts hold the metrics URL and the metrics not found. With `--probe` the folder also holds `probe.jsonl`, one line per probe. With `--gpu-ssh` the folder also holds `gpu.jsonl`, one line per GPU sample, and the facts hold the GPU's name, driver version and total memory, and when and why the GPU session ended if it ended early. None of these files holds the LLM key.
 
 #### Scenario: Folder contents
 
@@ -188,3 +194,8 @@ Each run SHALL write a new folder under `--out`, named by its start time, holdin
 
 - **WHEN** a run is interrupted from the keyboard during its second stage
 - **THEN** running requests end as `cut`, and the folder still gets the request record and a report covering what ran, marked as interrupted
+
+#### Scenario: GPU facts
+
+- **WHEN** a run with `--gpu-ssh` finishes
+- **THEN** its folder also holds `gpu.jsonl`, and `report.json` holds the GPU's name, driver version and total memory
