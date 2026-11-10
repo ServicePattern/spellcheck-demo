@@ -13,7 +13,11 @@ export function requestContextFor(language: Language, conversationSoFar: Turn[])
   return requestContextFromPreset(PRESETS[language], language, conversationSoFar);
 }
 
-export function requestContextFromPreset(preset: Preset, presetName: string, conversationSoFar: Turn[]): RequestContext {
+export function requestContextFromPreset(
+  preset: Preset,
+  presetName: string,
+  conversationSoFar: Turn[],
+): RequestContext {
   const blocks = preset.llmContext.split(BLOCK_SEPARATOR);
   const conversationIndex = blocks.findIndex((block) => block.startsWith(CONVERSATION_HEADING));
   if (conversationIndex === -1) {

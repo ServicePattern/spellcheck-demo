@@ -106,6 +106,29 @@ stateDiagram-v2
 - **Accepting** a completion moves the draft ahead by the completion's length and starts a new debounce, as Tab does in the page.
 - **Waiting** is the time between messages: the customer's reply and reading it.
 
+#### The agent against the assistant's rules
+
+Each rule of `src/assistant/check-while-typing.ts` (and the timeout in `src/assistant/llm.ts`), as built in `tools/load/agent.ts`:
+
+| Rule in the assistant | In the agent |
+|---|---|
+| The debounce restarts on every input, so a round starts `debounceMs` after the last keystroke | Followed: a round starts `--debounce-ms` after the end of a burst; a shorter pause sends nothing |
+| Spell check and auto-completion go out together under one `AbortController` | Followed: one controller per round, both requests sent at the same moment |
+| An input aborts the running request (`abortRunningRequest` on text change) | Followed: resuming typing at the pause end aborts what is still running, and so does accepting a completion |
+| Each request is ended after `LLM_TIMEOUT_MS` (20 s) | Followed: `--timeout-ms`, ended as `timeout` |
+| Auto-completion is asked only when the rest of the caret line is blank | Followed: with the caret at the end of the draft both are sent; a spell check only round puts the caret at an earlier word end and sends spell check alone |
+| An empty field sends nothing | Followed by construction: a round always follows a burst, so the draft is never empty |
+| Accepting a completion (Tab) inserts text, which is an input: a new debounce and a new round | Followed: the draft moves ahead and a new pause starts; the inserted words are the script's, not the model's |
+| `isCaretOnNewLine` adds a line to the auto-completion message | Left out: drafts are one line, so it is always false |
+| Typing the letters of the shown completion keeps it and sends no new request | Left out: a completion is accepted whole or not at all |
+| Auto-correction changes the text without a new request | Left out: the draft keeps its typos, so spell check answers are a little longer than in real use |
+| Undo and redo send no new request | Left out: no undo or redo |
+| Deleting only trailing spaces sends no new request | Left out: the agent never deletes |
+| Escape clears the debounce and aborts the running request | Left out: no Escape |
+| An input method still composing blocks auto-completion | Left out: no input methods |
+| Spell check or auto-completion can be switched off | Left out: both are always on |
+| Answers are dropped when the text or the caret moved while waiting | No effect on load: the request has already been served |
+
 ### Assumed defaults
 
 Every number is a flag. The loader prints the gaps it actually produced so they can be compared with real data later.
