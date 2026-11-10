@@ -16,19 +16,24 @@ The limit is the card's compute as more requests share each step, not memory: vL
 
 ## Architecture
 
+```mermaid
+flowchart LR
+  subgraph MAC["Mac · California"]
+    direction TB
+    LOAD["Load generator · tools/load<br/>N simulated agents<br/>real prompts and parsers"]
+    WATCH["Samplers<br/>vLLM metrics · probe · GPU"]
+  end
+  subgraph GPU["vast.ai GPU · Minnesota"]
+    direction TB
+    VLLM["vLLM v0.31.0<br/>gemma-4-26B-A4B-it<br/>1 × RTX PRO 6000, 96 GB"]
+    SMI["nvidia-smi"]
+  end
+  LOAD -- "SSH tunnel :8000<br/>spell check + auto-completion" --> VLLM
+  WATCH -. "/metrics · every 2 s" .-> VLLM
+  WATCH -. "SSH · every 2 s" .-> SMI
 ```
- Mac (California)                                            Rented instance (vast.ai, Minnesota)
- ┌──────────────────────────────┐                            ┌───────────────────────────┐
- │ Load generator (tools/load)  │  SSH tunnel :8000 ──────►  │ vLLM v0.31.0 (OpenAI API) │
- │   • N simulated agents       │                            │   gemma-4-26B-A4B-it      │
- │   • real prompts and parsers │  ◄────────── /metrics      │   8k context              │
- │   • metrics sampler, probe   │                            │   1 × RTX PRO 6000, 96 GB │
- │   • GPU sampler              │  ◄── SSH: nvidia-smi /2 s  │                           │
- └──────────────────────────────┘                            └───────────────────────────┘
-        │ optional path, measured on Gemini only
-        ▼
- Demo server (server/index.ts) ──► LLM   (the path the page uses: Basic auth, prompts)
-```
+
+Second path, measured on Gemini only: load generator → demo server (`server/index.ts`: Basic auth, prompts) → hosted LLM, the path the page uses.
 
 - **What is real:** the requests (built by the product's own message builders, `src/assistant/llm.ts`, with the server's system messages and examples), the model, the GPU, the network path, aborts.
 - **What is simulated:** the agents typing (below).
