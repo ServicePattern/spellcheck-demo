@@ -9,9 +9,9 @@
 
 ## 2. Chat scripts and context
 
-- [ ] 2.1 Implement `tools/load/chats.ts`: sources folder → conversations → message scripts, with the English and Arabic labels, `---`, comments, and the errors for an unrecognized line and a missing folder; verify with `chats.spec.ts` covering every scenario of the load-scripts spec's first two requirements (English, Arabic, Arabic with Latin text, comments, bad line, missing folder, conversation so far)
-- [ ] 2.2 Add a spec that reads the real sources at the default path and checks 137 English and 173 Arabic agent turns, skipped with a clear message when the sibling project is not there; verify it passes locally
-- [ ] 2.3 Implement `tools/load/context.ts`: preset with its `Conversation:` block replaced, custom dictionary from the preset, error when the block is missing; verify with `context.spec.ts` for the English and the Arabic preset that every other block is unchanged
+- [x] 2.1 Implement `tools/load/chats.ts`: sources folder → conversations → message scripts, with the English and Arabic labels, `---`, comments, and the errors for an unrecognized line and a missing folder; verify with `chats.spec.ts` covering every scenario of the load-scripts spec's first two requirements (English, Arabic, Arabic with Latin text, comments, bad line, missing folder, conversation so far)
+- [x] 2.2 Add a spec that reads the real sources at the default path and checks 137 English and 173 Arabic agent turns, skipped with a clear message when the sibling project is not there; verify it passes locally
+- [x] 2.3 Implement `tools/load/context.ts`: preset with its `Conversation:` block replaced, custom dictionary from the preset, error when the block is missing; verify with `context.spec.ts` for the English and the Arabic preset that every other block is unchanged
 
 ## 3. Typing model and typos
 
