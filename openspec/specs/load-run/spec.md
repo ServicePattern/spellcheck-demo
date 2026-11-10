@@ -21,6 +21,12 @@ Runs a load test from one command: applies the simulated agents to a target in s
 | `--out` | `tools/load/runs` | Where run folders are made |
 | `--trace` | off | Also record the text sent and the raw answers |
 | `--model`, `--url` | from the environment | Override `MODEL` and `LLM_URL` |
+| `--vllm-metrics` | off | Sample vLLM's metrics every 2 s (see the `load-vllm` capability) |
+| `--metrics-url` | `/metrics` on the origin of `LLM_URL` | Where vLLM's metrics are read |
+| `--probe` | off | Send a one-token probe straight to `LLM_URL` every 10 s |
+| `--price` | none | Hourly price of the instance in dollars, for the cost per agent-hour |
+
+`--vllm-metrics`, `--metrics-url` and `--probe` need a target that reaches an LLM (`llm` or `server`); with `--target fake` the loader stops and names the flag. `--price` must be a positive number.
 
 #### Scenario: Smallest run
 
@@ -41,6 +47,16 @@ Runs a load test from one command: applies the simulated agents to a target in s
 
 - **WHEN** `--target vllm` is given
 - **THEN** it stops with a message naming `llm`, `server` and `fake`, and sends nothing
+
+#### Scenario: Metrics with the fake target
+
+- **WHEN** `--target fake --vllm-metrics` is given
+- **THEN** it stops with a message that `--vllm-metrics` needs the `llm` or `server` target, and sends nothing
+
+#### Scenario: Bad price
+
+- **WHEN** `--price 0` or `--price abc` is given
+- **THEN** it stops naming `--price` and sends nothing
 
 ### Requirement: Targets
 
@@ -146,7 +162,7 @@ With `--max-requests N`, the run SHALL stop when N requests have been sent: no f
 
 ### Requirement: The run folder says what was run
 
-Each run SHALL write a new folder under `--out`, named by its start time, holding the request record, the report in Markdown and JSON, and the run's facts: seed, every setting (assumed inputs included), target, model and the endpoint's host, chat sources with counts, the commit of the repository and whether it had uncommitted changes, start time and duration. With `--target server` the facts also hold the server's port, how the server ended (stopped by the loader, or exited on its own with its code), the number of requests sent with no upstream line, and every line the server printed that is not an upstream call line.
+Each run SHALL write a new folder under `--out`, named by its start time, holding the request record, the report in Markdown and JSON, and the run's facts: seed, every setting (assumed inputs included), target, model and the endpoint's host, chat sources with counts, the commit of the repository and whether it had uncommitted changes, start time and duration. With `--target server` the facts also hold the server's port, how the server ended (stopped by the loader, or exited on its own with its code), the number of requests sent with no upstream line, and every line the server printed that is not an upstream call line. With `--vllm-metrics` the folder also holds `metrics.jsonl`, one line per sample, and the facts hold the metrics URL and the metrics not found. With `--probe` the folder also holds `probe.jsonl`, one line per probe. Neither file holds the LLM key.
 
 #### Scenario: Folder contents
 
@@ -157,6 +173,11 @@ Each run SHALL write a new folder under `--out`, named by its start time, holdin
 
 - **WHEN** a run with `--target server --agents 2 --stage 60` finishes
 - **THEN** `report.json` also holds the server's port, that the loader stopped it, the count of requests with no upstream line, and the server's start-up line
+
+#### Scenario: Metrics and probe files
+
+- **WHEN** a run with `--agents 5 --stage 60 --vllm-metrics --probe` finishes against vLLM
+- **THEN** its folder also holds `metrics.jsonl` and `probe.jsonl`, and `report.json` holds the metrics URL and the list of metrics not found (empty when all were found)
 
 #### Scenario: Server exits during a run
 
