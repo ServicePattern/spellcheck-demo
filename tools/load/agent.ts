@@ -48,6 +48,12 @@ export interface BurstEvent {
   draft: string;
 }
 
+export interface MessageStartEvent {
+  type: 'message-start';
+  agentNumber: number;
+  at: number;
+}
+
 export interface MessageSentEvent {
   type: 'message';
   agentNumber: number;
@@ -55,7 +61,7 @@ export interface MessageSentEvent {
   sentAt: number;
 }
 
-export type AgentEvent = RequestEvent | RoundEvent | BurstEvent | MessageSentEvent;
+export type AgentEvent = RequestEvent | RoundEvent | BurstEvent | MessageStartEvent | MessageSentEvent;
 
 export interface AgentOptions {
   agentNumber: number;
@@ -110,6 +116,11 @@ async function typeMessage(options: AgentOptions, script: MessageScript): Promis
   const requestContext = requestContextFor(script.language, script.conversationSoFar);
   const words = model.typedWords(script.message);
   const startedAt = clock.now();
+  options.onEvent({
+    type: 'message-start',
+    agentNumber,
+    at: startedAt,
+  });
   let typedCount = 0;
   while (typedCount < words.length) {
     const burstCount = Math.min(model.wordsInNextBurst(), words.length - typedCount);

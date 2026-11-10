@@ -34,10 +34,10 @@
 
 ## 6. Record and report
 
-- [ ] 6.1 Implement `tools/load/recorder.ts`: one line per request in `requests.jsonl` with the fields of the load-run spec, no text, and the separate trace file with `--trace`; verify with `recorder.spec.ts` that a record has every field, holds no draft or answer text, and the trace holds both
-- [ ] 6.2 Implement the figures in `tools/load/report.ts` as a pure function of records and run facts: counted requests, rounds per second, useful answer rate, outcome shares, nearest-rank percentiles, empty completions, in flight mean and max, per stage, kind and language, absent values where nothing can be computed; verify with `report.spec.ts` using hand-made records for every scenario of the load-report spec's first requirement
-- [ ] 6.3 Add the typing produced (gaps between rounds, allowed time, share of time on a message), the assumed inputs section with set and default values, the fake target notice, and the run's facts; verify with spec cases for `--wpm 55` shown as set and the fake notice at the top
-- [ ] 6.4 Render `report.md` and `report.json` from the same result and print the all-requests stage table; verify with a spec that every figure in the Markdown is in the JSON with the same value and that no stage carries a pass or fail mark
+- [x] 6.1 Implement `tools/load/recorder.ts`: one line per request in `requests.jsonl` with the fields of the load-run spec, no text, and the separate trace file with `--trace`; verify with `recorder.spec.ts` that a record has every field, holds no draft or answer text, and the trace holds both
+- [x] 6.2 Implement the figures in `tools/load/report.ts` as a pure function of records and run facts: counted requests, rounds per second, useful answer rate, outcome shares, nearest-rank percentiles, empty completions, in flight mean and max, per stage, kind and language, absent values where nothing can be computed; verify with `report.spec.ts` using hand-made records for every scenario of the load-report spec's first requirement
+- [x] 6.3 Add the typing produced (gaps between rounds, allowed time, share of time on a message), the assumed inputs section with set and default values, the fake target notice, and the run's facts; verify with spec cases for `--wpm 55` shown as set and the fake notice at the top
+- [x] 6.4 Render `report.md` and `report.json` from the same result and print the all-requests stage table; verify with a spec that every figure in the Markdown is in the JSON with the same value and that no stage carries a pass or fail mark
 
 ## 7. The run
 
