@@ -45,7 +45,7 @@
 - [x] 7.2 Implement the request cap and the keyboard interrupt: no further requests, running ones end as `cut`, the report is written and says why the run ended; verify with spec cases for `--max-requests 50` (exactly 50 sent) and an interrupt in the second stage
 - [x] 7.3 Add the repeatability spec: two virtual-clock runs with `--target fake --agents 3 --stage 60 --seed 7` write identical `requests.jsonl`, and a run with `--seed 8` differs; verify it passes
 - [x] 7.4 Dry run in real time against the fake target: `npm run load -- --target fake --agents 2,5 --stage 60 --warmup 10`; verify it takes about two minutes, sends nothing over the network, and the report's gap between rounds has a median within a few seconds of the 6 s the defaults aim at (adjust the draws' spreads if far off, and rerun the specs)
-- [ ] 7.5 Document the command: the `npm run load` row and the `tools/load/` layout in `CLAUDE.md`, and in `docs/load-test-architecture.md` the flags as built, the outcomes, and what the simulation leaves out; verify the documented dry-run command runs as written
+- [x] 7.5 Document the command: the `npm run load` row and the `tools/load/` layout in `CLAUDE.md`, and in `docs/load-test-architecture.md` the flags as built, the outcomes, and what the simulation leaves out; verify the documented dry-run command runs as written
 
 ## 8. Trial against a hosted model (spends money: run by a person)
 
