@@ -2,10 +2,10 @@
 
 ## 1. Scaffolding
 
-- [ ] 1.1 Set `playwright.config.ts` to `testDir: '.'` with `testMatch` for `src/**/*.spec.ts` and `tools/**/*.spec.ts`; verify `npm test` still runs the 42 existing tests and they pass
-- [ ] 1.2 Move the import resolve hook from `tools/eval/spell-check.ts` into a shared file under `tools/` and call it from the eval; verify `node tools/eval/spell-check.ts` without settings still prints its "Set LLM_API_KEY…" message (the imports resolve)
-- [ ] 1.3 Add `tools/load/random.ts` (seeded generator, streams by seed, agent and purpose, log-normal draw from a median) with `random.spec.ts`; verify the spec passes under `npm test`, which also proves specs under `tools/` are found and `.ts` imports resolve
-- [ ] 1.4 Add the `load` script to `package.json` and `tools/load/runs/` to `.gitignore`; verify `git status` ignores a file made in that folder
+- [x] 1.1 Set `playwright.config.ts` to `testDir: '.'` with `testMatch` for `src/**/*.spec.ts` and `tools/**/*.spec.ts`; verify `npm test` still runs the 42 existing tests and they pass
+- [x] 1.2 Move the import resolve hook from `tools/eval/spell-check.ts` into a shared file under `tools/` and call it from the eval; verify `node tools/eval/spell-check.ts` without settings still prints its "Set LLM_API_KEY…" message (the imports resolve)
+- [x] 1.3 Add `tools/load/random.ts` (seeded generator, streams by seed, agent and purpose, log-normal draw from a median) with `random.spec.ts`; verify the spec passes under `npm test`, which also proves specs under `tools/` are found and `.ts` imports resolve
+- [x] 1.4 Add the `load` script to `package.json` and `tools/load/runs/` to `.gitignore`; verify `git status` ignores a file made in that folder
 
 ## 2. Chat scripts and context
 

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { registerHooks } from 'node:module';
 import { parseArgs } from 'node:util';
 import type { Mistake } from '../../src/assistant/llm.ts';
+import { resolveExtensionlessImportsAsTs } from '../resolve-extensionless-imports.ts';
 
 resolveExtensionlessImportsAsTs();
 
@@ -234,20 +234,4 @@ async function runWithLimit<T>(
   });
   await Promise.all(workers);
   return results;
-}
-
-function resolveExtensionlessImportsAsTs(): void {
-  registerHooks({
-    resolve(specifier, context, nextResolve) {
-      try {
-        return nextResolve(specifier, context);
-      } catch (error) {
-        const isRelativeWithoutExtension = specifier.startsWith('.') && !/\.[a-z]+$/.test(specifier);
-        if (isRelativeWithoutExtension) {
-          return nextResolve(`${specifier}.ts`, context);
-        }
-        throw error;
-      }
-    },
-  });
 }

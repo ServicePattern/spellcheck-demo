@@ -12,3 +12,5 @@ playwright-report/
 
 .env
 LOCAL.txt
+
+tools/load/runs/
