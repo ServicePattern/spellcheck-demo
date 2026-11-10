@@ -1,6 +1,6 @@
 # Load test: loader architecture
 
-Design for a load generator that sends the demo's real traffic shape to an LLM served by vLLM on a rented vast.ai GPU. Written 2026-11-10. The core (change `load-generator`: scripts, agent, run, report, the `llm` and `fake` targets) is built; see [As built](#as-built-change-load-generator). The `server` target is built too (change `load-server-target`, see [The server target](#the-server-target-change-load-server-target)). The vLLM metrics, the probe and the cost figures are built and confirmed on a rented vLLM v0.31.0 instance (change `vllm-metrics`, see [vLLM metrics, probe and cost](#vllm-metrics-probe-and-cost-change-vllm-metrics)).
+Design for a load generator that sends the demo's real traffic shape to an LLM served by vLLM on a rented vast.ai GPU. Written 2026-11-10. The core (change `load-generator`: scripts, agent, run, report, the `llm` and `fake` targets) is built; see [As built](#as-built-change-load-generator). The `server` target is built too (change `load-server-target`, see [The server target](#the-server-target-change-load-server-target)). The first capacity run is done (change `first-capacity-run`, see [First capacity run](#first-capacity-run-2026-11-10)). The vLLM metrics, the probe and the cost figures are built and confirmed on a rented vLLM v0.31.0 instance (change `vllm-metrics`, see [vLLM metrics, probe and cost](#vllm-metrics-probe-and-cost-change-vllm-metrics)).
 
 ## Goal
 
@@ -432,6 +432,76 @@ npm run load:abort-check
 deploy/vastai/destroy.sh
 deploy/vastai/status.sh                      # no instance running
 ```
+
+
+### First capacity run (2026-11-10)
+
+**Setup.** `google/gemma-4-26B-A4B-it` on vLLM v0.31.0 (`vllm/vllm-openai:v0.31.0`, 8,192-token context, thinking off, default `--max-num-seqs`), one NVIDIA RTX PRO 6000 Blackwell Workstation Edition (96 GB, driver 595.91.07) in Minnesota, US, on demand at $1.778/h, reached from California through the SSH tunnel. `check.sh`: round trip 844 ms, 104 tokens/s on a 64-token generation. Commit `e5b81e7`, seed 1, target `llm` straight to vLLM:
+
+```sh
+npm run load -- --agents 25,50,100,200,300 --stage 180 --warmup 30 --vllm-metrics --probe --gpu-ssh root@154.7.90.1:41685 --price 1.778
+```
+
+Every typing input at its default, assumed and not measured: `--debounce-ms 1000`, `--timeout-ms 20000`, `--wpm 40`, `--burst-words 3`, `--pause-ms 1800`, `--accept-share 0.26`, `--spell-check-only-share 0.1`, `--typo-every 15`, `--between-messages-ms 20000`, `--arabic-share 0.5`. 16,771 requests in 900 s; the run completed every stage.
+
+**Client, all requests:**
+
+| Stage | Agents | Requests | Rounds/s | Useful answers | Aborted | Timeout | Failed | Unreadable | p50 ms | p95 ms | p99 ms | In flight mean | In flight max |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 25 | 531 | 1.89 | 75.3% | 24.7% | 0.0% | 0.0% | 0.0% | 246 | 586 | 1061 | 1 | 10 |
+| 2 | 50 | 1149 | 4.05 | 78.1% | 21.9% | 0.0% | 0.0% | 0.0% | 274 | 645 | 1015 | 2.3 | 13 |
+| 3 | 100 | 2132 | 7.53 | 75.4% | 24.6% | 0.0% | 0.0% | 0.0% | 311 | 859 | 1293 | 5.1 | 21 |
+| 4 | 200 | 4281 | 14.99 | 68.9% | 31.1% | 0.0% | 0.0% | 0.0% | 400 | 1091 | 1908 | 13.2 | 35 |
+| 5 | 300 | 6431 | 22.61 | 61.3% | 38.7% | 0.0% | 0.0% | 0.0% | 516 | 1322 | 2221 | 24.5 | 70 |
+
+No context-length rejections; empty completions 0.0 to 0.4%. English and Arabic agents had the same shape (useful 76.3%, 78.7%, 74.8%, 67.1%, 60.7% for English and 74.7%, 77.7%, 76.1%, 71.0%, 61.9% for Arabic).
+
+**vLLM, from its own metrics** (75 samples per stage, none failed, every metric found):
+
+| Stage | Agents | Running mean / max | Waiting mean / max | Cache mean / max | Prompt tokens/s | Generation tokens/s | Prefix cache hit rate |
+|---|---|---|---|---|---|---|---|
+| 1 | 25 | 0.6 / 4 | 0 / 0 | 0.4% / 2.3% | 6,155 | 57.4 | 91.3% |
+| 2 | 50 | 1.5 / 7 | 0 / 0 | 1.0% / 4.0% | 13,344 | 127.2 | 93.5% |
+| 3 | 100 | 3.5 / 10 | 0 / 0 | 2.0% / 5.5% | 25,319 | 254.2 | 93.7% |
+| 4 | 200 | 10.1 / 22 | 0 / 0 | 5.1% / 10.1% | 49,719 | 475.4 | 92.9% |
+| 5 | 300 | 19.7 / 38 | 0 / 0 | 9.3% / 17.0% | 73,317 | 616.9 | 89.4% |
+
+**GPU, from nvidia-smi** (75 samples per stage, none failed; the session ran to the end):
+
+| Stage | Agents | Utilization mean / max | Power mean / max | Temperature max |
+|---|---|---|---|---|
+| 1 | 25 | 32.5% / 100% | 155 W / 297 W | 40 °C |
+| 2 | 50 | 61.8% / 100% | 224 W / 331 W | 47 °C |
+| 3 | 100 | 90.0% / 100% | 312 W / 368 W | 58 °C |
+| 4 | 200 | 100% / 100% | 373 W / 414 W | 63 °C |
+| 5 | 300 | 98.7% / 100% | 426 W / 490 W | 68 °C |
+
+Memory used was 86.1 to 86.7 GiB (90%) in every stage: vLLM reserves that share at start (`--gpu-memory-utilization 0.90`), so the card's memory figure does not move with load; vLLM's cache usage above is the one that does.
+
+**Probe, loader, cost:**
+
+| Stage | Agents | Probe p50 ms (15 probes) | Client p50 ms | Event loop delay p99 / max ms | Cost per agent-hour |
+|---|---|---|---|---|---|
+| 1 | 25 | 182 | 246 | 11.6 / 34.8 | $0.071 |
+| 2 | 50 | 184 | 274 | 11.7 / 31.4 | $0.036 |
+| 3 | 100 | 142 | 311 | 11.9 / 36.1 | $0.018 |
+| 4 | 200 | 145 | 400 | 12.2 / 32.4 | $0.009 |
+| 5 | 300 | 181 | 516 | 12.4 / 34.8 | $0.006 |
+
+The probe's p95 and max (316 to 2,728 ms) come from 15 probes per stage and are mostly single outliers. During stage 1, `GET /health` through the tunnel, which vLLM answers without the model, took 151 ms at the median (150 ms at best): that is the network and tunnel share of every request.
+
+**Abort check** (after the run, same instance): running 0 before sending, 20 just before the abort at 2.7 s, 0 one second after, 0 three seconds after: **aborts reach vLLM through the tunnel**, and an aborted request stops generating at once.
+
+**Money.** The session needed three hosts. One RTX PRO 6000 WS in California was still pulling the vLLM image after 8 minutes (683 Mb/s) and was destroyed (about 0.15 h at $1.36/h); one in Colorado started but refused the account's SSH key, even though vast.ai listed it as attached (about 0.15 h at $1.48/h); the Minnesota host worked at once and ran 0.4 h at $1.778/h. Together roughly $1.15 by price × age (storage and bandwidth are billed apart; the account's billing page has the invoice). `status.sh` afterwards: no instance running.
+
+**Reading of the figures** (by the person, not by the report):
+
+- **Through 100 agents the card is not the limit.** The useful answer rate stays at 75 to 78%, set by the assumed pauses and by distance: about 150 ms of every request is the network and the tunnel, against roughly 90 ms of model time at light load. vLLM never queues, its cache stays under 6%, and generation scales with load (57, 127, 254 tokens/s).
+- **From 100 to 300 agents the useful rate falls** (75.4%, 68.9%, 61.3%) while latency roughly doubles at the tail (p99 1.3 s to 2.2 s). The card's throughput bends: 475 to 617 generated tokens/s for 50% more load, with utilization at 100% and power rising to 426 W. vLLM still queues nothing and its cache stays under 17%, so the limit is the compute per decoding step as batches grow (up to 38 sequences), not memory or admission.
+- **Where it bends:** with these typing inputs, this distance and this card, the useful rate holds to about 100 agents and slips past it; the figures do not show a cliff up to 300. No failure or timeout in 16,771 requests.
+- **The loader kept up:** event loop delay p99 of 12 ms in every stage, so no stage needs discounting.
+- **Distance is the largest lever left.** The probe (one output token) stays at 140 to 185 ms while agents' requests rise to 516 ms, so most of the latency growth is generation in larger batches; and the fixed 150 ms of tunnel is what a server next to the GPU would remove.
+- **Cost at that level:** at 100 agents, $0.018 per agent-hour on this card at this price.
 
 ## Running it
 
