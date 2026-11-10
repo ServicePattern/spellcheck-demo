@@ -1,0 +1,105 @@
+schema: spec-driven
+
+context: |
+  Project on this branch: the LOAD TEST of the auto-completion and auto-correction
+  demo. The product code (src/, server/) is the system under test, not the thing
+  being developed. Work here builds and runs a load generator and reports capacity.
+
+  The question every change serves: how many agents typing at once can one LLM
+  instance serve before the answers stop arriving in time, for a given model and GPU?
+
+  Read first:
+    docs/load-test-architecture.md             the loader design: agents, targets, defaults, report
+    docs/server-architecture-and-review.md     the server and the assistant's request logic (the traffic shape), known findings
+    CLAUDE.md                                  commands, layout and code conventions of the repository
+
+  System under test:
+    - The traffic: after each pause in typing (1 s debounce) the assistant sends a
+      spell check request and an auto-completion request in parallel, each carrying
+      the full LLM context, and aborts both on the next keystroke
+      (src/assistant/check-while-typing.ts, src/assistant/llm.ts).
+    - The LLM: an open-weight model served by vLLM on a GPU rented by the hour from
+      vast.ai, reached through an SSH tunnel at 127.0.0.1:8000 (OpenAI-compatible).
+    - Two targets: vLLM directly (model and GPU capacity), or the demo server's
+      /api/autocorrection and /api/autocompletion (the whole path).
+
+  The loader (tools/load/, plain TypeScript run directly by Node, like tools/eval/):
+    - Simulates agents, not requests: type in bursts, pause, send both requests,
+      resume and abort, accept some completions, wait between messages.
+    - Sends the real requests: it imports the message builders and parsers from
+      src/assistant/llm.ts and the upstream client with its prompts from server/.
+    - Applies load in steps of agents, records every request, samples vLLM's
+      metrics, and reports per stage: useful answer rate (answered before the agent
+      resumed typing), latency percentiles, aborts, timeouts, failures, unreadable
+      answers, queue depth, tokens per second, and the knee with cost per agent-hour.
+
+  Used from ../SpellCheckingPrototype, never changed from here:
+    - deploy/vastai/  search, start, tunnel, check, status, destroy
+    - eval/completion/sources/support-en.txt, support-ar.txt  synthetic support chats
+    - telemetry/events.jsonl  source of two typing defaults
+    - docs/VASTAI-GPU.md, docs/LLM-SELECTION.md  renting guide, candidate models
+
+  Hard constraints:
+    - Synthetic text only. A vast.ai instance is someone else's machine: the loader
+      reads only the synthetic chats and the presets. No real agent or customer text.
+    - Paid runs are explicit. Renting, and every run against a rented GPU, is started
+      by a person. An instance bills until destroyed: every run plan ends with
+      deploy/vastai/destroy.sh and a status check.
+    - Secrets stay out of the repository: the vast.ai key in the CLI's own config,
+      LLM and Basic auth values in the git-ignored .env.
+    - The loader does not change product behavior. A change to src/ or server/ made
+      for the load test (for example cancelling upstream calls, an output cap) is its
+      own change, measured before and after.
+    - The loader sends what the assistant sends. Request text comes from the real
+      builders and prompts, never from copies.
+    - Runs are repeatable: a seed fixes the typing, and each run records its seed,
+      settings, model, GPU, price and the commit.
+    - Run output (tools/load/runs/) is git-ignored. Figures that matter are written
+      into docs/ by hand, with the date and the run's settings.
+    - Licensing: no GPL/LGPL terms. Any new dependency needs its license checked
+      first. Tools that run only on the rented instance are not dependencies.
+    - English and Arabic: the load mix covers both, and figures are reported per
+      language where they differ.
+
+  Assumed until measured (see the design doc's defaults table): typing speed, burst
+  and pause lengths, time between messages, language mix. From tester telemetry:
+  about 6 s between request rounds, 26% of shown completions accepted. A capacity
+  figure is only as good as these numbers; every report states which were assumed.
+
+  Decided (2026-11-10):
+    - No pass rule. The report gives the figures per stage (useful answer rate,
+      latency percentiles, aborts, timeouts, failures, unreadable answers, queue,
+      tokens per second); reading them is left to a person. No verdict, no early stop.
+    - Capacity runs use google/gemma-4-26B-A4B-it on one 96 GB card.
+    - Until a GPU is rented, the loader is tried against a hosted Gemini model
+      through its OpenAI-compatible endpoint, with a few agents. Such a run shows
+      the loader works; it says nothing about capacity.
+
+  Tech stack: TypeScript strict with erasableSyntaxOnly, Node 24, npm, Playwright
+  as the test runner (pure code runs in Node, specs next to the file as
+  <file>.spec.ts). Code conventions are in CLAUDE.md: no comments, braces on every
+  if/else body, no more than 2 keys on one line, boolean names start with
+  is/has/should/with/can.
+
+rules:
+  proposal:
+    - State the question the change answers about capacity, or mark it "tooling".
+    - Include a Non-goals section.
+    - Say whether the change needs a rented GPU, and estimate the hours and the cost.
+    - Call out any new third-party dependency with its license.
+  specs:
+    - Define every figure a requirement names (what is counted, over which requests, in which window).
+    - Scenarios state the load: target, number of agents, stage length, and the settings that differ from the defaults.
+    - Cover English and Arabic drafts wherever request text is built.
+    - Keep assumed inputs apart from measured results.
+  design:
+    - Say which target the change concerns (vLLM directly, the demo server, or both).
+    - Say what is simulated and what is real, and what the simulation leaves out.
+    - Note the loader's own limits (one Node process, one SSH tunnel) where they could affect a figure.
+    - Note any effect on the system under test, and on the cost of a run.
+  tasks:
+    - Pure parts (chat scripts, typing model, report maths) get a spec file next to them.
+    - A dry run against a local fake LLM comes before any run against a rented GPU.
+    - Tasks that spend money are marked as such and are run by a person.
+    - A change that ends in a paid run ends with a destroy and status check task.
+    - End with npm run typecheck and npm test.
