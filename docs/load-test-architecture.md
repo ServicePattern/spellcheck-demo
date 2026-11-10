@@ -291,6 +291,33 @@ The run facts add the server's port, how it ended, the requests with no upstream
 
 **Checked without a key.** `load-run.spec.ts` starts the real server with an `LLM_URL` on a closed local port and runs `--target server --agents 1 --stage 10 --warmup 1 --wpm 400`: every request not cut fails with `HTTP 502`, each has an upstream line, and neither the key nor the credentials reach the run folder or the output.
 
+### Trial through the server (2026-11-10)
+
+`npm run load -- --target server --agents 3 --stage 180 --max-requests 300`, `gemini-3.5-flash-lite` through Gemini's OpenAI-compatible endpoint (`generativelanguage.googleapis.com`) behind the demo server, seed 1 (agents 1 and 2 Arabic, agent 3 English), commit `f6e92e6`, every typing input at its default (assumed, not measured: `--debounce-ms 1000`, `--timeout-ms 20000`, `--wpm 40`, `--burst-words 3`, `--pause-ms 1800`, `--accept-share 0.26`, `--spell-check-only-share 0.1`, `--typo-every 15`, `--between-messages-ms 20000`, `--arabic-share 0.5`).
+
+Client, as the agents saw it:
+
+| Stage | Agents | Requests | Rounds/s | Useful answers | Aborted | Timeout | Failed | Unreadable | p50 ms | p95 ms | p99 ms | Empty completions | In flight mean | In flight max |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 3 | 67 | 0.23 | 62.7% | 37.3% | 0.0% | 0.0% | 0.0% | 772 | 966 | 1061 | 0.0% | 0.3 | 4 |
+
+Upstream calls made by the server:
+
+| Stage | Requests | Upstream calls | Answered | Errors | p50 ms | p95 ms | p99 ms | Unused by the client | Upstream time s |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | all | 67 | 100.0% | 0.0% | 763 | 996 | 1055 | 37.3% | 51.4 |
+| 1 | spell check | 34 | 100.0% | 0.0% | 763 | 1044 | 1049 | 41.2% | 26.7 |
+| 1 | auto-completion | 33 | 100.0% | 0.0% | 762 | 996 | 1055 | 33.3% | 24.7 |
+
+81 requests were sent (14 in warm-up) and the server printed 81 upstream lines: none missing. Typing produced: gap between rounds p25 4.4 s, p50 6.5 s, p75 12.7 s; allowed time p50 0.93 s.
+
+What it showed about the loader and the server path, not about capacity:
+
+- **Every abort is paid for upstream.** The unused share (37.3%) equals the client's abort share exactly: each of the 25 counted aborted requests still ran to the end upstream, as review finding 1 says. At this typing model about a third of the upstream time, here roughly 19 of 51 s, serves no one.
+- **The server adds little at this load.** Client p50 772 ms against upstream p50 763 ms. The figures are not matched per request, so this is a stage-level comparison only.
+- **The path works end to end with the real request form:** no failed, no unreadable, no timeout; the loader started the server, checked it with its credentials, and stopped it, with no process left and no key or credentials in the run folder.
+- As in the direct trial, every aborted request had under a second of allowed time (at most 665 ms here) while answers took 0.75 to 1 s, so the abort share is set mostly by the assumed pause, not by load.
+
 ## Running it
 
 ```sh

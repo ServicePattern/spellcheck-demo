@@ -27,6 +27,6 @@
 
 ## 6. Trial through the server (spends money: run by a person)
 
-- [ ] 6.1 **Costs a few cents; a person runs it.** With the Gemini settings in the git-ignored `.env`, run `npm run load -- --target server --agents 3 --stage 180 --max-requests 300`; verify the run folder is written, no server process is left (`pgrep -f server/index.ts` prints nothing), the upstream section is filled, and any `failed` reasons are read from the record
-- [ ] 6.2 Write the trial into `docs/load-test-architecture.md`: date, model, settings, the client and upstream stage tables, the unused upstream share next to the client's abort share, and what it showed about the loader and the server path (not capacity); verify the section names which inputs were assumed
-- [ ] 6.3 Run `npm run typecheck` and `npm test`; verify both pass. No instance was rented, so there is nothing to destroy
+- [x] 6.1 **Costs a few cents; a person runs it.** With the Gemini settings in the git-ignored `.env`, run `npm run load -- --target server --agents 3 --stage 180 --max-requests 300`; verify the run folder is written, no server process is left (`pgrep -f server/index.ts` prints nothing), the upstream section is filled, and any `failed` reasons are read from the record
+- [x] 6.2 Write the trial into `docs/load-test-architecture.md`: date, model, settings, the client and upstream stage tables, the unused upstream share next to the client's abort share, and what it showed about the loader and the server path (not capacity); verify the section names which inputs were assumed
+- [x] 6.3 Run `npm run typecheck` and `npm test`; verify both pass. No instance was rented, so there is nothing to destroy
