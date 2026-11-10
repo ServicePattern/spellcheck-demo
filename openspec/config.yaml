@@ -89,7 +89,7 @@ rules:
     - Call out any new third-party dependency with its license.
   specs:
     - Define every figure a requirement names (what is counted, over which requests, in which window).
-    - Scenarios state the load: target, number of agents, stage length, and the settings that differ from the defaults.
+    - Scenarios state the load (target, number of agents, stage length) and the settings that differ from the defaults.
     - Cover English and Arabic drafts wherever request text is built.
     - Keep assumed inputs apart from measured results.
   design:
