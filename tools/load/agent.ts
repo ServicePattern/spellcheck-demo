@@ -190,6 +190,7 @@ async function runRound(
     caret: isSpellCheckOnly ? model.spellCheckOnlyCaret(draft) : draft.length,
     requestContext,
   };
+  const sentAt = clock.now();
   const kinds: LLMRequestKind[] = isSpellCheckOnly ? ['spell-check'] : ['spell-check', 'auto-completion'];
   const round = new AbortController();
   const pauseEnd = new AbortController();
@@ -201,7 +202,7 @@ async function runRound(
     if (!options.takeRequestPermit()) {
       break;
     }
-    requests.push(sendRequest(options, kind, roundDraft, round.signal).then((sent) => {
+    requests.push(sendRequest(options, kind, roundDraft, round.signal, sentAt).then((sent) => {
       if (isCompletionToAccept(sent, round.signal) && model.isCompletionAccepted()) {
         acceptedWords = countWords(sent.completion ?? '');
         endPause();
@@ -236,10 +237,10 @@ async function sendRequest(
   kind: LLMRequestKind,
   roundDraft: RoundDraft,
   roundSignal: AbortSignal,
+  sentAt: number,
 ): Promise<SentRequest> {
   const { clock, settings, llmClient } = options;
   const userMessage = buildUserMessage(kind, roundDraft);
-  const sentAt = clock.now();
   const timeout = new AbortController();
   const timerEnd = new AbortController();
   clock.sleep(settings.timeoutMs, timerEnd.signal).then(() => timeout.abort('timeout'), () => undefined);

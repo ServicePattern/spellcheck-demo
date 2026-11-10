@@ -1,6 +1,6 @@
 # Load test: loader architecture
 
-Design for a load generator that sends the demo's real traffic shape to an LLM served by vLLM on a rented vast.ai GPU. Nothing here is built yet. Written 2026-11-10.
+Design for a load generator that sends the demo's real traffic shape to an LLM served by vLLM on a rented vast.ai GPU. Written 2026-11-10. The core (change `load-generator`: scripts, agent, run, report, the `llm` and `fake` targets) is built; see [As built](#as-built-change-load-generator). The `server` target, the vLLM metrics, the probe and the cost figures are still plans.
 
 ## Goal
 
@@ -164,7 +164,7 @@ Agents are the unit of load, in steps:
 
 Per request: stage, agent, kind, language, outcome, latency, the time the agent gave it before resuming, prompt and answer size, and whether the answer parsed.
 
-Outcomes: `answered`, `aborted`, `timeout`, `error`, `unreadable`. A context-length rejection from vLLM is reported apart from other errors (the start script serves an 8,192-token context).
+Outcomes: `answered`, `unreadable`, `aborted`, `timeout`, `failed`, `cut` (defined under [As built](#as-built-change-load-generator)). Planned with `vllm-metrics`: a context-length rejection from vLLM is reported apart from other errors (the start script serves an 8,192-token context).
 
 Per 2 s sample from vLLM: requests running, requests waiting, prompt and generation token counters. The exact metric names are to be confirmed against v0.31.0.
 
@@ -186,6 +186,64 @@ One row per stage:
 With `--price <$/h>` each row also gives the cost per agent-hour at that level.
 
 There is no pass rule and no verdict. The report gives the figures; where the knee is, is read from them by a person.
+
+## As built (change `load-generator`)
+
+### Command and flags
+
+```sh
+npm run load -- --agents <levels> [flags]
+npm run load -- --target fake --agents 2,5 --stage 60 --warmup 10   # dry run: two minutes, no network, no key
+```
+
+Run flags:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--agents` | required | Agents per stage, one number or rising numbers: `2,5,10` |
+| `--target` | `llm` | `llm`: the server's upstream client (`server/openai-chat-client.ts`) with `LLM_URL`, `MODEL`, `LLM_API_KEY` from `.env` or the environment, sending exactly what the server sends. `fake`: built in, one seeded fake per agent, no network |
+| `--stage` | 180 | Seconds per stage |
+| `--warmup` | 30 | Seconds at the start of each stage left out of the figures; 0 or more, less than `--stage` |
+| `--seed` | 1 | Seed of all draws |
+| `--chats` | `../SpellCheckingPrototype/eval/completion/sources` | Chat sources folder |
+| `--max-requests` | none | Stop once this many requests have been sent |
+| `--out` | `tools/load/runs` | Where run folders are made |
+| `--trace` | off | Also write `trace.jsonl` with each user message and raw answer |
+| `--model`, `--url` | from the environment | Override `MODEL` and `LLM_URL` |
+| `--fake-latency-ms` | 600 | Median latency of the fake target (log-normal, spread 0.5) |
+
+Typing flags (assumed, listed in every report): `--debounce-ms 1000`, `--timeout-ms 20000`, `--wpm 40`, `--burst-words 3`, `--pause-ms 1800`, `--accept-share 0.26`, `--spell-check-only-share 0.1`, `--typo-every 15`, `--between-messages-ms 20000`, `--arabic-share 0.5`. A negative value must be written `--pause-ms=-5` to reach the range check; Node's parser reads `-5` alone as a flag and stops with an error naming it.
+
+Spreads, fixed in `typing-model.ts`: speed ±25% per agent (uniform), words per burst log-normal 0.5 (rounded, at least 1), pause 0.7, time between messages 0.6. Each new agent starts after a delay drawn over the warm-up (at most 30 s).
+
+### Outcomes
+
+Decided from the agent's own signals, never from error text:
+
+| Outcome | Meaning |
+|---|---|
+| `answered` | The answer arrived before the agent resumed and before the timeout, and parsed |
+| `unreadable` | It arrived in time and did not parse |
+| `aborted` | The agent resumed typing, or accepted a completion, first |
+| `timeout` | No answer within `--timeout-ms` |
+| `failed` | The target returned an error or the connection failed; the reason is recorded |
+| `cut` | The run ended (stage end, request cap, Ctrl-C) while it was running |
+
+Latency is from sending to the outcome; allowed time is from sending to the moment the agent resumed (or accepted). Both requests of a round share one send time.
+
+### What the simulation leaves out
+
+- The draft keeps its typos: no auto-correction, so spell check answers are a little longer than in real use.
+- A completion is accepted whole (as Tab) or not at all; the accepted words are the script's, not the model's.
+- No undo, redo, Escape, deletions, input methods, or drafts over several lines (`isCaretOnNewLine` is always false); both features are always on.
+- Pauses are drawn in advance: an agent never waits for a suggestion.
+- The fake target reports about one word in fifteen of four or more letters as a mistake, not the actual typos, and its completions come from a short fixed list per language.
+
+The rule-by-rule comparison with `check-while-typing.ts` is under [The agent against the assistant's rules](#the-agent-against-the-assistants-rules).
+
+### Typing produced by the defaults
+
+On the virtual clock, 20 agents for 30 minutes on the real chat sources (seeds 1 to 3): gap between one agent's rounds p25 5.4 s, p50 8.6–9.1 s, p75 16–17 s; allowed time p50 0.85 s; 62–63% of the time on a message. The telemetry gap was 2.8 s, 5.7 s and 15.3 s, from a prototype that triggers differently. Spreads alone bring the median to about 7 s at best while shortening the tail; `--burst-words 2` gives a median of 6.6 s. The defaults are left as the spec sets them.
 
 ## Running it
 
