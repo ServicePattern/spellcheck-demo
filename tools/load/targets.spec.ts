@@ -34,7 +34,7 @@ function autoCompletionMessage(draft: string): string {
 
 test('the fake answers each kind with JSON the assistant parses', async () => {
   const { clock, runUntilIdle } = createVirtualClock();
-  const client = createTarget(FAKE_RUN, {}, clock).clientForAgent(1);
+  const client = (await createTarget(FAKE_RUN, {}, clock, 20000)).clientForAgent(1);
   const draft = 'Thank you. I can see the registartion from March, but the contributions for the last two months have not been paid yet';
   const answers: string[] = [];
   for (let index = 0; index < 40; index++) {
@@ -55,7 +55,7 @@ test('the fake answers each kind with JSON the assistant parses', async () => {
 
 test('the fake completes in the draft language, with some empty completions', async () => {
   const { clock, runUntilIdle } = createVirtualClock();
-  const client = createTarget(FAKE_RUN, {}, clock).clientForAgent(2);
+  const client = (await createTarget(FAKE_RUN, {}, clock, 20000)).clientForAgent(2);
   const completions: (string | null)[] = [];
   for (let index = 0; index < 200; index++) {
     const message = autoCompletionMessage('وعليكم السلام، دعني أتحقق');
@@ -74,7 +74,7 @@ test('fake latencies come from the seed, centered on the set median', async () =
   const latencies = async (seed: number) => {
     const { clock, runUntilIdle } = createVirtualClock();
     const run = { ...FAKE_RUN, seed };
-    const client = createTarget(run, {}, clock).clientForAgent(1);
+    const client = (await createTarget(run, {}, clock, 20000)).clientForAgent(1);
     const ends: number[] = [];
     for (let index = 0; index < 501; index++) {
       void client.ask(spellCheckMessage('Hello there'), new AbortController().signal, 'spell-check')
@@ -94,7 +94,7 @@ test('fake latencies come from the seed, centered on the set median', async () =
 test('an aborted fake request ends at the abort time with an error', async () => {
   const { clock, runUntilIdle } = createVirtualClock();
   const run = { ...FAKE_RUN, fakeLatencyMs: 60000 };
-  const client = createTarget(run, {}, clock).clientForAgent(1);
+  const client = (await createTarget(run, {}, clock, 20000)).clientForAgent(1);
   const controller = new AbortController();
   let endedAt = -1;
   let result: unknown;

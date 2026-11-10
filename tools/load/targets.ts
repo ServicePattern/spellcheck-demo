@@ -1,14 +1,36 @@
 import { createOpenAIChatClient } from '../../server/openai-chat-client.ts';
-import type { LLMClient } from '../../src/assistant/types.ts';
+import type { LLMClient, LLMRequestKind } from '../../src/assistant/types.ts';
 import type { Clock } from './clock.ts';
 import { createRandomStream } from './random.ts';
-import type { RunSettings } from './settings.ts';
+import { startServerTarget } from './server-target.ts';
+import type { RunSettings, TargetName } from './settings.ts';
+
+export interface UpstreamCall {
+  kind: LLMRequestKind;
+  startedAtMs: number;
+  durationMs: number;
+  error?: string;
+}
+
+export interface ServerFacts {
+  port: number;
+  ending: string;
+  requestsWithoutUpstreamLine: number;
+  otherLines: string[];
+}
+
+export interface TargetFacts {
+  server: ServerFacts;
+  upstreamCalls: UpstreamCall[];
+}
 
 export interface Target {
-  name: RunSettings['target'];
+  name: TargetName;
   model: string | undefined;
   endpointHost: string | undefined;
   clientForAgent(agentNumber: number): LLMClient;
+  finish?(sentRequests: number): Promise<void>;
+  facts?(): TargetFacts;
 }
 
 export const FAKE_LATENCY_SPREAD = 0.5;
@@ -31,11 +53,28 @@ const FAKE_COMPLETIONS: Record<'English' | 'Arabic', string[]> = {
 
 type Environment = Record<string, string | undefined>;
 
-export function createTarget(run: RunSettings, environment: Environment, clock: Clock): Target {
-  return run.target === 'fake' ? createFakeTarget(run, clock) : createLLMTarget(run, environment);
+export interface LLMSettings {
+  apiKey: string;
+  model: string;
+  url: string;
 }
 
-export function createLLMTarget(run: RunSettings, environment: Environment): Target {
+export async function createTarget(
+  run: RunSettings,
+  environment: Environment,
+  clock: Clock,
+  requestTimeoutMs: number,
+): Promise<Target> {
+  if (run.target === 'fake') {
+    return createFakeTarget(run, clock);
+  }
+  if (run.target === 'server') {
+    return startServerTarget(readLLMSettings(run, environment), requestTimeoutMs, clock);
+  }
+  return createLLMTarget(run, environment);
+}
+
+export function readLLMSettings(run: RunSettings, environment: Environment): LLMSettings {
   const apiKey = environment.LLM_API_KEY ?? '';
   const model = run.model ?? environment.MODEL ?? '';
   const url = run.url ?? environment.LLM_URL ?? '';
@@ -45,11 +84,20 @@ export function createLLMTarget(run: RunSettings, environment: Environment): Tar
     ...(url ? [] : ['LLM_URL (or --url)']),
   ];
   if (missing.length) {
-    throw new Error(`The llm target needs ${missing.join(', ')}: set them in .env or the environment.`);
+    throw new Error(`The ${run.target} target needs ${missing.join(', ')}: set them in .env or the environment.`);
   }
   if (!URL.canParse(url)) {
     throw new Error(`LLM_URL is not a URL: ${url}`);
   }
+  return {
+    apiKey,
+    model,
+    url,
+  };
+}
+
+export function createLLMTarget(run: RunSettings, environment: Environment): Target {
+  const { apiKey, model, url } = readLLMSettings(run, environment);
   const llmClient = createOpenAIChatClient(apiKey, model, url);
   return {
     name: 'llm',

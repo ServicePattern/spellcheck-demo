@@ -1,7 +1,9 @@
 import { parseArgs } from 'node:util';
 import { DEFAULT_CHATS_FOLDER } from './chats.ts';
 
-export type Target = 'llm' | 'fake';
+export type TargetName = 'llm' | 'server' | 'fake';
+
+const TARGET_NAMES: TargetName[] = ['llm', 'server', 'fake'];
 
 export interface TypingSettings {
   debounceMs: number;
@@ -18,7 +20,7 @@ export interface TypingSettings {
 
 export interface RunSettings {
   agentLevels: number[];
-  target: Target;
+  target: TargetName;
   stageSeconds: number;
   warmupSeconds: number;
   seed: number;
@@ -112,7 +114,8 @@ export const TYPING_INPUTS: TypingInput[] = [
 export const USAGE = `Usage: npm run load -- --agents <levels> [flags]
 
   --agents 2,5,10          agents per stage, rising (required)
-  --target llm|fake        llm (default): LLM_URL, MODEL, LLM_API_KEY; fake: built-in, no network
+  --target llm|server|fake llm (default): LLM_URL, MODEL, LLM_API_KEY; server: the demo server, started
+                           for the run with those settings; fake: built-in, no network
   --stage 180              seconds per stage
   --warmup 30              seconds at the start of each stage left out of the figures
   --seed 1                 seed of the typing
@@ -200,11 +203,15 @@ function readAgentLevels(value: string | boolean | undefined): number[] {
   return levels;
 }
 
-function readTarget(value: string | boolean | undefined): Target {
-  if (value === undefined || value === 'llm' || value === 'fake') {
-    return value ?? 'llm';
+function readTarget(value: string | boolean | undefined): TargetName {
+  if (value === undefined) {
+    return 'llm';
   }
-  throw new Error(`--target must be llm or fake, got ${String(value)}`);
+  const target = TARGET_NAMES.find((name) => name === value);
+  if (!target) {
+    throw new Error(`--target must be llm, server or fake, got ${String(value)}`);
+  }
+  return target;
 }
 
 function readWarmup(value: string | boolean | undefined, stageSeconds: number): number {

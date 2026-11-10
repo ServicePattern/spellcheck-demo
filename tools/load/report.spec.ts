@@ -9,8 +9,10 @@ import {
   type GroupFigures,
   type Report,
   type RunFacts,
+  type UpstreamGroupFigures,
 } from './report.ts';
 import { parseSettings } from './settings.ts';
+import type { UpstreamCall } from './targets.ts';
 
 const STAGE_FLAGS = ['--target', 'fake', '--agents', '5', '--stage', '120', '--warmup', '20'];
 
@@ -33,6 +35,7 @@ function factsFor(flags: string[], stages: RunFacts['stages']): RunFacts {
     commit: 'c4a2482',
     hasUncommittedChanges: false,
     stages,
+    server: null,
   };
 }
 
@@ -329,4 +332,152 @@ test('no stage is marked as passed or failed and no capacity is named', () => {
   const markdown = renderMarkdown(twoStageReport());
   expect(markdown).not.toMatch(/\bpass(ed)?\b|\bverdict\b|\bknee\b|\bcapacity\b|✓|✗|❌|✅/i);
   expect(markdown.match(/\bfail\w*/gi)?.every((word) => word === 'Failed')).toBe(true);
+});
+
+function serverFacts(): RunFacts {
+  const facts = factsFor(['--target', 'server', '--agents', '3', '--stage', '180', '--warmup', '30'], [{
+    stage: 1,
+    agents: 3,
+    startMs: 0,
+    endMs: 180000,
+  }]);
+  return {
+    ...facts,
+    model: 'gemini-3.5-flash-lite',
+    endpointHost: 'generativelanguage.googleapis.com',
+    server: {
+      port: 51234,
+      ending: 'stopped by the loader',
+      requestsWithoutUpstreamLine: 2,
+      otherLines: ['http://127.0.0.1:51234, serving /x/dist/'],
+    },
+  };
+}
+
+function upstreamCall(kind: UpstreamCall['kind'], startedAtMs: number, durationMs: number, error?: string): UpstreamCall {
+  const call: UpstreamCall = {
+    kind,
+    startedAtMs,
+    durationMs,
+  };
+  if (error !== undefined) {
+    call.error = error;
+  }
+  return call;
+}
+
+test('unused upstream calls are the calls less the requests the client received', () => {
+  nextSentAt = 40000;
+  const records = [
+    ...many(20, 'answered', { kind: 'spell-check' }),
+    ...many(12, 'answered', { kind: 'auto-completion' }),
+    ...many(10, 'aborted', { kind: 'spell-check' }),
+    ...many(18, 'aborted', { kind: 'auto-completion' }),
+  ];
+  const calls = [
+    ...Array.from({ length: 30 }, (_, index) => upstreamCall('spell-check', 40000 + index * 1000, 700)),
+    ...Array.from({ length: 30 }, (_, index) => upstreamCall('auto-completion', 40000 + index * 1000, 800)),
+  ];
+  const [stage] = computeReport(records, [], serverFacts(), calls).stages;
+  expect(stage.all.requests).toBe(60);
+  expect(stage.upstream?.all).toMatchObject({
+    calls: 60,
+    unusedShare: 0.4667,
+    answeredShare: 1,
+    errorShare: 0,
+    latencyP50Ms: 700,
+    upstreamSeconds: 45,
+  });
+  expect(stage.upstream?.byKind['spell-check']).toMatchObject({ calls: 30, unusedShare: 0.3333 });
+  expect(stage.upstream?.byKind['auto-completion']).toMatchObject({ calls: 30, unusedShare: 0.6 });
+  expect(renderMarkdown(computeReport(records, [], serverFacts(), calls))).toContain('| 46.7% | 45 |');
+});
+
+test('upstream calls started in warm-up are left out, errors are counted, and a 502 counts as received', () => {
+  nextSentAt = 40000;
+  const records = [
+    record('failed', { reason: 'HTTP 502: HTTP 429: rate limited' }),
+    record('failed', { reason: 'TypeError: fetch failed' }),
+    record('answered'),
+  ];
+  const calls = [
+    upstreamCall('spell-check', 10000, 500),
+    upstreamCall('spell-check', 40100, 300, 'HTTP 429: rate limited'),
+    upstreamCall('spell-check', 40200, 900),
+    upstreamCall('spell-check', 40300, 1200),
+  ];
+  const upstream = computeReport(records, [], serverFacts(), calls).stages[0].upstream;
+  expect(upstream?.all).toMatchObject({
+    calls: 3,
+    errorShare: 0.3333,
+    unusedShare: 0.3333,
+    latencyP50Ms: 900,
+    latencyP99Ms: 1200,
+  });
+});
+
+test('with no upstream calls the upstream figures are absent, and never below zero unused', () => {
+  const [stage] = computeReport(many(4, 'answered'), [], serverFacts(), []).stages;
+  expect(stage.upstream?.all).toEqual({
+    calls: 0,
+    answeredShare: null,
+    errorShare: null,
+    latencyP50Ms: null,
+    latencyP95Ms: null,
+    latencyP99Ms: null,
+    unusedShare: null,
+    upstreamSeconds: 0,
+  });
+  const oneCall = [upstreamCall('spell-check', 40000, 100)];
+  const fewerCalls = computeReport(many(4, 'answered'), [], serverFacts(), oneCall);
+  expect(fewerCalls.stages[0].upstream?.all.unusedShare).toBe(0);
+});
+
+test('a run with another target has no upstream section', () => {
+  const report = computeReport(OUTCOME_MIX, [], ONE_STAGE, [upstreamCall('spell-check', 40000, 100)]);
+  expect(report.stages[0].upstream).toBeNull();
+  expect(renderMarkdown(report)).not.toContain('Upstream');
+});
+
+test('every upstream figure in report.md matches report.json, and the server facts are stated', () => {
+  nextSentAt = 40000;
+  const records = [...many(7, 'answered'), ...many(3, 'aborted', { kind: 'auto-completion' })];
+  const calls = [
+    ...Array.from({ length: 7 }, (_, index) => upstreamCall('spell-check', 40000 + index * 500, 600 + index * 10)),
+    ...Array.from({ length: 4 }, (_, index) => {
+      return upstreamCall('auto-completion', 42000 + index * 500, 900, index ? undefined : 'empty answer');
+    }),
+  ];
+  const report = computeReport(records, [], serverFacts(), calls);
+  const markdown = renderMarkdown(report);
+  const json = JSON.parse(renderJson(report)) as Report;
+  const percent = (value: number | null) => value === null ? '—' : `${(value * 100).toFixed(1)}%`;
+  const plain = (value: number | null) => value === null ? '—' : String(value);
+  const stage = json.stages[0];
+  const groups: [string, UpstreamGroupFigures | undefined][] = [
+    ['all', stage.upstream?.all],
+    ['spell check', stage.upstream?.byKind['spell-check']],
+    ['auto-completion', stage.upstream?.byKind['auto-completion']],
+  ];
+  for (const [name, figures] of groups) {
+    expect(figures).toBeDefined();
+    const row = [
+      1,
+      name,
+      figures?.calls,
+      percent(figures?.answeredShare ?? null),
+      percent(figures?.errorShare ?? null),
+      plain(figures?.latencyP50Ms ?? null),
+      plain(figures?.latencyP95Ms ?? null),
+      plain(figures?.latencyP99Ms ?? null),
+      percent(figures?.unusedShare ?? null),
+      figures?.upstreamSeconds,
+    ];
+    expect(markdown).toContain(`| ${row.join(' | ')} |`);
+  }
+  const upstreamAt = markdown.indexOf('## Upstream calls made by the server');
+  expect(upstreamAt).toBeGreaterThan(markdown.indexOf('## Stages: Arabic'));
+  expect(markdown).toContain('Server: port 51234, stopped by the loader');
+  expect(markdown).toContain('Requests with no upstream line in the server\'s log: 2');
+  expect(json.facts.server?.otherLines).toEqual(['http://127.0.0.1:51234, serving /x/dist/']);
 });

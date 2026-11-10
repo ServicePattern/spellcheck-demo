@@ -288,6 +288,7 @@ The assistant and the server both wait 20 s. They race, so the same slow call en
 - **`X-Powered-By: Express`** is sent. `app.disable('x-powered-by')` removes it.
 - **The hot-reload WebSocket is not behind Basic auth.** Upgrade requests do not pass through Express middleware, so the claim in CLAUDE.md that hot reload is "behind the same Basic auth" holds for HTTP only. Dev mode only; it matters only if dev mode is shared through ngrok. From reading.
 - **`PORT` is not validated.** A non-numeric value becomes `NaN`.
+- **A port already in use is reported as listening.** Express 5 passes the listen error to the `app.listen` callback, which ignores it: the server prints `http://127.0.0.1:<port>, serving …` and then exits with no error message. Found on 2026-11-10 while building the load test's server target, which now probes the server with its own credentials before trusting that line.
 - **No shutdown handling.** In-flight upstream calls are dropped on SIGTERM. Fine for a demo.
 - **No tests for the server.** The page tests fake `/api/**`, so auth, validation and error mapping are untested. The eval covers the upstream client only with a real key.
 

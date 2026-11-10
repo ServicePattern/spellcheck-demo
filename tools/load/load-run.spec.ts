@@ -1,8 +1,9 @@
 import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
-import { createVirtualClock } from './clock.ts';
+import { createRealClock, createVirtualClock } from './clock.ts';
 import { runLoad, type LoadRunResult } from './load-run.ts';
 import type { RequestRecord } from './recorder.ts';
 import type { Report } from './report.ts';
@@ -154,4 +155,56 @@ test('with --trace a trace file holds the text sent', async () => {
   expect(files).toEqual(['report.json', 'report.md', 'requests.jsonl', 'trace.jsonl']);
   expect(await readFile(join(result.folder, 'trace.jsonl'), 'utf8')).toContain('Draft:');
   expect(await readFile(join(result.folder, 'requests.jsonl'), 'utf8')).not.toContain('Draft:');
+});
+
+async function unreachableLLMUrl(): Promise<string> {
+  const probe = createNetServer();
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  const { port } = probe.address() as AddressInfo;
+  await new Promise((resolve) => probe.close(resolve));
+  return `http://127.0.0.1:${port}/v1/chat/completions`;
+}
+
+test('through the real server with an unreachable LLM every request fails with a 502 and has an upstream line', async () => {
+  const key = 'test-key-not-real-0123';
+  const logged: string[] = [];
+  const out = await mkdtemp(join(tmpdir(), 'load-runs-'));
+  const result = await runLoad({
+    args: [
+      '--target', 'server',
+      '--agents', '1',
+      '--stage', '10',
+      '--warmup', '1',
+      '--wpm', '400',
+      '--chats', await chatsFolder(),
+      '--out', out,
+    ],
+    environment: {
+      LLM_API_KEY: key,
+      MODEL: 'test-model',
+      LLM_URL: await unreachableLLMUrl(),
+    },
+    clock: createRealClock(),
+    driveClock: async () => undefined,
+    startedAt: new Date('2026-11-10T12:00:00.000Z'),
+    repository: { commit: 'abc1234', hasUncommittedChanges: false },
+    log: (line) => logged.push(line),
+  });
+  const records = await recordsOf(result.folder);
+  expect(records.length).toBeGreaterThan(0);
+  const notCut = records.filter((record) => record.outcome !== 'cut');
+  expect(notCut.length).toBeGreaterThan(0);
+  expect(notCut.every((record) => record.outcome === 'failed' && record.reason?.startsWith('HTTP 502'))).toBe(true);
+  const { server } = result.report.facts;
+  expect(server).toMatchObject({
+    ending: 'stopped by the loader',
+    requestsWithoutUpstreamLine: 0,
+  });
+  expect(server?.otherLines[0]).toContain(`http://127.0.0.1:${server?.port}`);
+  expect((await readdir(result.folder)).sort()).toEqual(['report.json', 'report.md', 'requests.jsonl']);
+  const everything = [logged.join('\n'), ...await Promise.all((await readdir(result.folder)).map((file) => {
+    return readFile(join(result.folder, file), 'utf8');
+  }))].join('\n');
+  expect(everything).not.toContain(key);
+  expect(everything).not.toMatch(/Basic [A-Za-z0-9+/=]{8,}|load-[0-9a-f]{8}/);
 });

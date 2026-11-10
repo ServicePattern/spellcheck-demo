@@ -4,12 +4,13 @@ import { runAgent, type AgentEvent } from './agent.ts';
 import { messageScriptsOf, readChatSources, type ChatSources, type Language } from './chats.ts';
 import type { Clock } from './clock.ts';
 import { createRandomStream } from './random.ts';
-import { createRecorder, type StagePlace } from './recorder.ts';
+import { createRecorder, type RequestRecord, type StagePlace } from './recorder.ts';
 import {
   computeReport,
   renderJson,
   renderMarkdown,
   stageTable,
+  upstreamTable,
   type ActivityEvent,
   type EndReason,
   type Report,
@@ -18,7 +19,7 @@ import {
   type StagePlan,
 } from './report.ts';
 import { parseSettings, type Settings } from './settings.ts';
-import { createTarget } from './targets.ts';
+import { createTarget, type Target } from './targets.ts';
 import { createTypingModel } from './typing-model.ts';
 
 export interface RepositoryFacts {
@@ -49,10 +50,43 @@ const MAX_START_SPREAD_MS = 30000;
 
 type StopReason = Exclude<EndReason, 'completed'> | 'end';
 
+interface RunSetup {
+  input: LoadRunInput;
+  settings: Settings;
+  sources: ChatSources;
+  target: Target;
+}
+
+interface StagesDone {
+  folder: string;
+  records: RequestRecord[];
+  activity: ActivityEvent[];
+  stagePlans: StagePlan[];
+  stopReason: StopReason;
+}
+
 export async function runLoad(input: LoadRunInput): Promise<LoadRunResult> {
   const settings = parseSettings(input.args);
-  const target = createTarget(settings.run, input.environment, input.clock);
   const sources = await readChatSources(settings.run.chatsFolder);
+  const target = await createTarget(settings.run, input.environment, input.clock, settings.typing.timeoutMs);
+  const setup: RunSetup = {
+    input,
+    settings,
+    sources,
+    target,
+  };
+  const sent = { count: 0 };
+  let stagesDone: StagesDone;
+  try {
+    stagesDone = await runStagesOnTarget(setup, sent);
+  } finally {
+    await target.finish?.(sent.count);
+  }
+  return writeReport(setup, stagesDone, sent.count);
+}
+
+async function runStagesOnTarget(setup: RunSetup, sent: { count: number }): Promise<StagesDone> {
+  const { input, settings, sources, target } = setup;
   const folder = await makeRunFolder(settings.run.outFolder, input.startedAt);
   const { clock } = input;
   const stageMs = settings.run.stageSeconds * 1000;
@@ -70,13 +104,12 @@ export async function runLoad(input: LoadRunInput): Promise<LoadRunResult> {
     }
   };
   input.interruptSignal?.addEventListener('abort', () => stopWith('interrupted'), { once: true });
-  let sentRequests = 0;
   const takeRequestPermit = () => {
-    if (stop.signal.aborted || sentRequests >= (settings.run.maxRequests ?? Infinity)) {
+    if (stop.signal.aborted || sent.count >= (settings.run.maxRequests ?? Infinity)) {
       return false;
     }
-    sentRequests++;
-    if (sentRequests === settings.run.maxRequests) {
+    sent.count++;
+    if (sent.count === settings.run.maxRequests) {
       stopWith('request cap');
     }
     return true;
@@ -140,11 +173,22 @@ export async function runLoad(input: LoadRunInput): Promise<LoadRunResult> {
   };
   await Promise.all([runStages(), input.driveClock()]);
   await recorder.close();
+  return {
+    folder,
+    records: recorder.records,
+    activity,
+    stagePlans,
+    stopReason: stop.signal.reason as StopReason,
+  };
+}
 
-  const stopReason = stop.signal.reason as StopReason;
-  const report = computeReport(recorder.records, activity, {
+async function writeReport(setup: RunSetup, stagesDone: StagesDone, sentRequests: number): Promise<LoadRunResult> {
+  const { input, settings, sources, target } = setup;
+  const { folder, stopReason } = stagesDone;
+  const targetFacts = target.facts?.();
+  const report = computeReport(stagesDone.records, stagesDone.activity, {
     startedAt: input.startedAt.toISOString(),
-    durationSeconds: Math.round(clock.now() / 100) / 10,
+    durationSeconds: Math.round(input.clock.now() / 100) / 10,
     endReason: stopReason === 'end' ? 'completed' : stopReason,
     settings,
     target: target.name,
@@ -153,11 +197,15 @@ export async function runLoad(input: LoadRunInput): Promise<LoadRunResult> {
     sources: sourcesFacts(sources),
     commit: input.repository.commit,
     hasUncommittedChanges: input.repository.hasUncommittedChanges,
-    stages: stagePlans,
-  });
+    stages: stagesDone.stagePlans,
+    server: targetFacts?.server ?? null,
+  }, targetFacts?.upstreamCalls);
   await writeFile(join(folder, REPORT_MARKDOWN_FILE), renderMarkdown(report));
   await writeFile(join(folder, REPORT_JSON_FILE), renderJson(report));
   input.log(`\n${stageTable(report, (stage) => stage.all)}\n`);
+  if (report.facts.server) {
+    input.log(`Upstream calls made by the server:\n\n${upstreamTable(report)}\n`);
+  }
   input.log(`Run ended: ${report.facts.endReason}. ${sentRequests} requests sent.`);
   input.log(`Report: ${join(folder, REPORT_MARKDOWN_FILE)}`);
   return {

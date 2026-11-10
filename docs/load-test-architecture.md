@@ -1,6 +1,6 @@
 # Load test: loader architecture
 
-Design for a load generator that sends the demo's real traffic shape to an LLM served by vLLM on a rented vast.ai GPU. Written 2026-11-10. The core (change `load-generator`: scripts, agent, run, report, the `llm` and `fake` targets) is built; see [As built](#as-built-change-load-generator). The `server` target, the vLLM metrics, the probe and the cost figures are still plans.
+Design for a load generator that sends the demo's real traffic shape to an LLM served by vLLM on a rented vast.ai GPU. Written 2026-11-10. The core (change `load-generator`: scripts, agent, run, report, the `llm` and `fake` targets) is built; see [As built](#as-built-change-load-generator). The `server` target is built too (change `load-server-target`, see [The server target](#the-server-target-change-load-server-target)). The vLLM metrics, the probe and the cost figures are still plans.
 
 ## Goal
 
@@ -201,7 +201,7 @@ Run flags:
 | Flag | Default | Meaning |
 |---|---|---|
 | `--agents` | required | Agents per stage, one number or rising numbers: `2,5,10` |
-| `--target` | `llm` | `llm`: the server's upstream client (`server/openai-chat-client.ts`) with `LLM_URL`, `MODEL`, `LLM_API_KEY` from `.env` or the environment, sending exactly what the server sends. `fake`: built in, one seeded fake per agent, no network |
+| `--target` | `llm` | `llm`: the server's upstream client (`server/openai-chat-client.ts`) with `LLM_URL`, `MODEL`, `LLM_API_KEY` from `.env` or the environment, sending exactly what the server sends. `server`: the demo server, started by the loader with those settings (below). `fake`: built in, one seeded fake per agent, no network |
 | `--stage` | 180 | Seconds per stage |
 | `--warmup` | 30 | Seconds at the start of each stage left out of the figures; 0 or more, less than `--stage` |
 | `--seed` | 1 | Seed of all draws |
@@ -262,6 +262,34 @@ What it showed about the loader, not about capacity:
 - Spell check reported a mistake in 2 of 20 answered drafts: at one typo per 15 words most drafts at a round hold none yet. Answers were short (median 16 characters for spell check, 51 for auto-completion).
 - No auto-completion came back empty, against 10% from the fake.
 - Run folders hold no key; the commit and the clean tree were recorded.
+
+## The server target (change `load-server-target`)
+
+```sh
+npm run load -- --target server --agents 3 --stage 180 --max-requests 300
+```
+
+**How the server is run.** The loader starts `server/index.ts` as `npm run server` would, as a child process, with an environment of `PATH` plus exactly what the server reads: `LLM_API_KEY`, `MODEL`, `LLM_URL` (as for `--target llm`, `--model` and `--url` winning), `PORT` (a free port on `127.0.0.1`) and `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` made up for the run and kept in memory only. It waits for the start-up line, then posts `{}` to `/api/autocorrection` with those credentials: only the server it started can answer that 400, and the probe calls nothing upstream. (The probe is needed: when the port is taken, the server still prints its start-up line, because Express 5 hands the listen error to the ignored `app.listen` callback, and then exits silently.) A server that exits, does not listen within 15 s or fails the probe stops the run before any request, with the server's output in the message. At the end the loader waits for an upstream line for every request sent (at most the request timeout plus 5 s), then stops the server (`SIGTERM`, `SIGKILL` after 5 s); an exit hook covers Ctrl-C.
+
+**Requests** go to `/api/autocorrection` and `/api/autocompletion` with the run's Basic auth, and the answer is read as the page's `apiLLMClient` reads it: a non-2xx status is `HTTP <status>` plus the body's `error`, so an upstream failure shows as `failed` with `HTTP 502: <upstream reason>`.
+
+**Upstream calls** come from the server's own line per request, `<kind>: <answered | error> in <n> ms`, timed on the loader's clock when the line arrives. The report adds a section after the client tables, per stage, for all and per kind, over calls that started after the warm-up:
+
+| Figure | Definition |
+|---|---|
+| Upstream calls | Lines read for calls started in the stage after its warm-up |
+| Answered, Errors | Shares of those calls |
+| p50, p95, p99 ms | Nearest-rank percentiles of their durations |
+| Unused by the client | Calls less the counted requests whose answer the client received (`answered`, `unreadable`, or `failed` with an HTTP status), over calls, never below zero: the calls the server finished for a client that had stopped waiting |
+| Upstream time s | Sum of their durations |
+
+The run facts add the server's port, how it ended, the requests with no upstream line, and everything else the server printed.
+
+**What it leaves out.** The browser: its limit of six connections per origin, its own connection reuse, TLS and ngrok in front of the server; the page itself. One server process. The server's lines carry no request id, so upstream figures are counts per stage and kind, not matched to requests.
+
+**Loader limits.** The server runs on the same machine as the loader; at larger scales they compete for CPU and the server's added latency includes it. The client and the server both time out at 20 s, so a call slower than that ends as either a client `timeout` or a `failed` 502, whichever fires first. Log lines arrive over a pipe a few milliseconds late, which only moves calls near a stage boundary.
+
+**Checked without a key.** `load-run.spec.ts` starts the real server with an `LLM_URL` on a closed local port and runs `--target server --agents 1 --stage 10 --warmup 1 --wpm 400`: every request not cut fails with `HTTP 502`, each has an upstream line, and neither the key nor the credentials reach the run folder or the output.
 
 ## Running it
 

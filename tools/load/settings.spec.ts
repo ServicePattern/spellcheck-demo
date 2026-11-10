@@ -32,8 +32,10 @@ test('every flag has its default', () => {
   expect(settings.setFlags).toEqual(['target', 'agents', 'stage']);
 });
 
-test('the target is llm unless set', () => {
+test('the target is llm unless set, and server and fake can be set', () => {
   expect(parseSettings(['--agents', '1']).run.target).toBe('llm');
+  expect(parseSettings(['--agents', '1', '--target', 'server']).run.target).toBe('server');
+  expect(parseSettings(['--agents', '1', '--target', 'fake']).run.target).toBe('fake');
 });
 
 test('flags are read into their settings', () => {
@@ -84,7 +86,7 @@ const badValues: [string[], string][] = [
   [['--seed', '1.5'], '--seed must be a whole number'],
   [['--warmup=-1'], '--warmup must be a number of seconds'],
   [['--warmup', '60', '--stage', '60'], '--warmup must be less than --stage'],
-  [['--target', 'server'], '--target must be llm or fake'],
+  [['--target', 'vllm'], '--target must be llm, server or fake'],
   [['--speed', '3'], "Unknown option '--speed'"],
 ];
 

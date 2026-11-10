@@ -2,7 +2,8 @@ import type { LLMRequestKind } from '../../src/assistant/types.ts';
 import type { MessageSentEvent, MessageStartEvent, RoundEvent } from './agent.ts';
 import type { Language } from './chats.ts';
 import type { RequestRecord } from './recorder.ts';
-import { TYPING_INPUTS, type Settings } from './settings.ts';
+import { TYPING_INPUTS, type Settings, type TargetName } from './settings.ts';
+import type { ServerFacts, UpstreamCall } from './targets.ts';
 
 export type EndReason = 'completed' | 'request cap' | 'interrupted';
 
@@ -30,13 +31,14 @@ export interface RunFacts {
   durationSeconds: number;
   endReason: EndReason;
   settings: Settings;
-  target: 'llm' | 'fake';
+  target: TargetName;
   model: string | null;
   endpointHost: string | null;
   sources: SourcesFacts;
   commit: string;
   hasUncommittedChanges: boolean;
   stages: StagePlan[];
+  server: ServerFacts | null;
 }
 
 export type ActivityEvent = RoundEvent | MessageStartEvent | MessageSentEvent;
@@ -76,6 +78,23 @@ export interface StageFigures {
   byKind: Record<LLMRequestKind, GroupFigures>;
   byLanguage: Record<Language, GroupFigures>;
   typing: TypingProduced;
+  upstream: UpstreamFigures | null;
+}
+
+export interface UpstreamGroupFigures {
+  calls: number;
+  answeredShare: Figure;
+  errorShare: Figure;
+  latencyP50Ms: Figure;
+  latencyP95Ms: Figure;
+  latencyP99Ms: Figure;
+  unusedShare: Figure;
+  upstreamSeconds: number;
+}
+
+export interface UpstreamFigures {
+  all: UpstreamGroupFigures;
+  byKind: Record<LLMRequestKind, UpstreamGroupFigures>;
 }
 
 export interface AssumedInput {
@@ -97,7 +116,12 @@ interface Window {
 
 type RecordFilter = (record: RequestRecord) => boolean;
 
-export function computeReport(records: RequestRecord[], events: ActivityEvent[], facts: RunFacts): Report {
+export function computeReport(
+  records: RequestRecord[],
+  events: ActivityEvent[],
+  facts: RunFacts,
+  upstreamCalls: UpstreamCall[] = [],
+): Report {
   const warmupMs = facts.settings.run.warmupSeconds * 1000;
   return {
     facts,
@@ -121,8 +145,54 @@ export function computeReport(records: RequestRecord[], events: ActivityEvent[],
           Arabic: figuresFor((record) => record.language === 'Arabic'),
         },
         typing: typingProduced(records, events, plan.stage, window),
+        upstream: facts.target === 'server' ? upstreamFigures(upstreamCalls, records, plan.stage, window) : null,
       };
     }),
+  };
+}
+
+function upstreamFigures(
+  calls: UpstreamCall[],
+  records: RequestRecord[],
+  stage: number,
+  window: Window,
+): UpstreamFigures {
+  const callsInWindow = calls.filter((call) => call.startedAtMs >= window.startMs && call.startedAtMs < window.endMs);
+  const figuresFor = (kind?: LLMRequestKind) => {
+    const isOfKind = (callKind: LLMRequestKind) => kind === undefined || callKind === kind;
+    const received = records.filter((record) => {
+      return isOfKind(record.kind) && isCounted(record, stage) && isReceivedByClient(record);
+    }).length;
+    return upstreamGroupFigures(callsInWindow.filter((call) => isOfKind(call.kind)), received);
+  };
+  return {
+    all: figuresFor(),
+    byKind: {
+      'spell-check': figuresFor('spell-check'),
+      'auto-completion': figuresFor('auto-completion'),
+    },
+  };
+}
+
+function isReceivedByClient(record: RequestRecord): boolean {
+  if (record.outcome === 'failed') {
+    return record.reason?.startsWith('HTTP ') ?? false;
+  }
+  return record.outcome === 'answered' || record.outcome === 'unreadable';
+}
+
+function upstreamGroupFigures(calls: UpstreamCall[], receivedByClient: number): UpstreamGroupFigures {
+  const durations = calls.map((call) => call.durationMs);
+  const errors = calls.filter((call) => call.error !== undefined).length;
+  return {
+    calls: calls.length,
+    answeredShare: share(calls.length - errors, calls.length),
+    errorShare: share(errors, calls.length),
+    latencyP50Ms: nearestRank(durations, 50),
+    latencyP95Ms: nearestRank(durations, 95),
+    latencyP99Ms: nearestRank(durations, 99),
+    unusedShare: share(Math.max(0, calls.length - receivedByClient), calls.length),
+    upstreamSeconds: round(durations.reduce((sum, duration) => sum + duration, 0) / 1000, 1),
   };
 }
 
@@ -306,6 +376,54 @@ const GROUP_COLUMNS: [string, (figures: GroupFigures) => string][] = [
   ['In flight max', (figures) => formatNumber(figures.inFlightMax)],
 ];
 
+const UPSTREAM_COLUMNS: [string, (figures: UpstreamGroupFigures) => string][] = [
+  ['Upstream calls', (figures) => String(figures.calls)],
+  ['Answered', (figures) => formatShare(figures.answeredShare)],
+  ['Errors', (figures) => formatShare(figures.errorShare)],
+  ['p50 ms', (figures) => formatNumber(figures.latencyP50Ms)],
+  ['p95 ms', (figures) => formatNumber(figures.latencyP95Ms)],
+  ['p99 ms', (figures) => formatNumber(figures.latencyP99Ms)],
+  ['Unused by the client', (figures) => formatShare(figures.unusedShare)],
+  ['Upstream time s', (figures) => String(figures.upstreamSeconds)],
+];
+
+const UPSTREAM_GROUPS: [string, (upstream: UpstreamFigures) => UpstreamGroupFigures][] = [
+  ['all', (upstream) => upstream.all],
+  ['spell check', (upstream) => upstream.byKind['spell-check']],
+  ['auto-completion', (upstream) => upstream.byKind['auto-completion']],
+];
+
+export function upstreamTable(report: Report): string {
+  return table(
+    ['Stage', 'Requests', ...UPSTREAM_COLUMNS.map(([heading]) => heading)],
+    report.stages.flatMap((stage) => {
+      const { upstream } = stage;
+      if (!upstream) {
+        return [];
+      }
+      return UPSTREAM_GROUPS.map(([group, figuresOf]) => {
+        return [String(stage.stage), group, ...UPSTREAM_COLUMNS.map(([, cell]) => cell(figuresOf(upstream)))];
+      });
+    }),
+  );
+}
+
+function upstreamSection(report: Report): string[] {
+  if (report.facts.target !== 'server') {
+    return [];
+  }
+  return [
+    '## Upstream calls made by the server',
+    '',
+    'Measured from the server\'s own log: one line per upstream call, counted in the stage where it started, '
+      + 'after the warm-up. "Unused by the client" are calls the server finished for a client that had stopped waiting '
+      + '(aborted, timed out or cut): upstream calls less the counted requests whose answer the client received.',
+    '',
+    upstreamTable(report),
+    '',
+  ];
+}
+
 const TYPING_COLUMNS: [string, (typing: TypingProduced) => string][] = [
   ['Round gap p25 ms', (typing) => formatNumber(typing.roundGapP25Ms)],
   ['Round gap p50 ms', (typing) => formatNumber(typing.roundGapP50Ms)],
@@ -373,6 +491,7 @@ export function renderMarkdown(report: Report): string {
     '',
     stageTable(report, (stage) => stage.byLanguage.Arabic),
     '',
+    ...upstreamSection(report),
     '## Typing produced',
     '',
     'What the assumed typing inputs produced: the gap between the starts of one agent\'s successive rounds, '
@@ -415,6 +534,18 @@ function runFactLines(facts: RunFacts): string[] {
     `Chat sources: ${sources.folder} (${sources.files.join(', ')})`,
     `English: ${sources.English.conversations} conversations, ${sources.English.agentTurns} agent turns`,
     `Arabic: ${sources.Arabic.conversations} conversations, ${sources.Arabic.agentTurns} agent turns`,
+    ...serverFactLines(facts.server),
+  ];
+}
+
+function serverFactLines(server: ServerFacts | null): string[] {
+  if (!server) {
+    return [];
+  }
+  return [
+    `Server: port ${server.port}, ${server.ending}`,
+    `Requests with no upstream line in the server's log: ${server.requestsWithoutUpstreamLine}`,
+    ...server.otherLines.map((line) => `Server printed: \`${line}\``),
   ];
 }
 
