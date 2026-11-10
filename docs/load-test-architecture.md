@@ -318,6 +318,35 @@ What it showed about the loader and the server path, not about capacity:
 - **The path works end to end with the real request form:** no failed, no unreadable, no timeout; the loader started the server, checked it with its credentials, and stopped it, with no process left and no key or credentials in the run folder.
 - As in the direct trial, every aborted request had under a second of allowed time (at most 665 ms here) while answers took 0.75 to 1 s, so the abort share is set mostly by the assumed pause, not by load.
 
+### Stepped run through the server (2026-11-10)
+
+Same setup as the trial above (server target, `gemini-3.5-flash-lite`, seed 1, every typing input at its default and assumed), scaled up: `npm run load -- --target server --agents 10,25,50 --stage 180 --max-requests 3000`. 2,047 requests in 565 s, the cap not reached; the server printed an upstream line for all but one (8 requests were cut at the end). A first single-stage run with `--agents 10` gave the same picture (216 counted requests, 55.1% useful, p50 735 ms).
+
+Client, all requests:
+
+| Stage | Agents | Requests | Rounds/s | Useful answers | Aborted | Timeout | Failed | Unreadable | p50 ms | p95 ms | p99 ms | Empty completions | In flight mean | In flight max |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 10 | 225 | 0.79 | 59.6% | 40.4% | 0.0% | 0.0% | 0.0% | 730 | 943 | 1088 | 0.0% | 0.9 | 8 |
+| 2 | 25 | 467 | 1.67 | 59.7% | 40.3% | 0.0% | 0.0% | 0.0% | 661 | 869 | 993 | 0.0% | 1.7 | 8 |
+| 3 | 50 | 1051 | 3.71 | 64.2% | 35.8% | 0.0% | 0.0% | 0.0% | 663 | 861 | 997 | 2.6% | 4 | 15 |
+
+Upstream calls, all kinds:
+
+| Stage | Upstream calls | Answered | Errors | p50 ms | p95 ms | p99 ms | Unused by the client | Upstream time s |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 224 | 100.0% | 0.0% | 732 | 975 | 1101 | 40.2% | 167 |
+| 2 | 467 | 99.8% | 0.2% | 669 | 900 | 1125 | 40.3% | 329.7 |
+| 3 | 1059 | 100.0% | 0.0% | 673 | 901 | 1055 | 36.3% | 728.5 |
+
+Typing produced: gap between rounds p50 7.5 s, 9.4 s and 8.7 s; allowed time p50 756, 738 and 818 ms. Agents writing Arabic: 7 of the first 10 by the seed; per stage the English useful share was 61.8%, 62.8%, 68.0% and the Arabic 58.4%, 57.3%, 60.6%, at the same latency.
+
+What it showed:
+
+- **No sign of saturation at 50 agents** (about 7.5 requests a second, up to 15 in flight): latency fell slightly as load rose, and there were no rate-limit errors. A hosted endpoint scales behind itself, so this says nothing about one GPU; that question needs the rented instance.
+- **The useful answer rate is capped by the assumed pauses, not by the model.** Every aborted request, in every stage, had under one second of allowed time (951 ms at most), while answers took 0.65 to 0.75 s at the median. With a 1.8 s median pause and a 1 s debounce, about 40% of requests cannot be useful whatever the model does. Measuring real pauses is the most valuable input to replace.
+- **The cost of uncancelled upstream calls is stable:** 36 to 40% of upstream calls, about 461 of 1,225 upstream seconds over the run, served no one.
+- **The loader holds 50 agents in one Node process** with every request accounted for in both the client record and the server's log.
+
 ## Running it
 
 ```sh
