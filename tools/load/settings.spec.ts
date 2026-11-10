@@ -32,6 +32,7 @@ test('every flag has its default', () => {
     metricsUrl: undefined,
     withProbe: false,
     pricePerHour: undefined,
+    gpuSsh: undefined,
   });
   expect(settings.setFlags).toEqual(['target', 'agents', 'stage']);
 });
@@ -91,7 +92,20 @@ test('the vLLM flags are read for the llm and server targets', () => {
   expect(parseSettings(['--agents', '1', '--target', 'fake', '--price', '2']).run.pricePerHour).toBe(2);
 });
 
+test('the GPU address is read with any target', () => {
+  const run = parseSettings(['--agents', '1', '--target', 'fake', '--gpu-ssh', 'root@73.97.224.215:16559']).run;
+  expect(run.gpuSsh).toEqual({
+    user: 'root',
+    host: '73.97.224.215',
+    port: 16559,
+  });
+});
+
 const badValues: [string[], string][] = [
+  [['--gpu-ssh', 'root@73.97.224.215'], '--gpu-ssh must be <user>@<host>:<port>'],
+  [['--gpu-ssh', 'root@host:0'], '--gpu-ssh must be <user>@<host>:<port> with a port from 1 to 65535, got root@host:0'],
+  [['--gpu-ssh', 'root@host:70000'], 'got root@host:70000'],
+  [['--gpu-ssh', 'host:22'], '--gpu-ssh must be <user>@<host>:<port>'],
   [['--target', 'fake', '--vllm-metrics'], '--vllm-metrics needs the llm or server target, not fake'],
   [['--target', 'fake', '--probe', '--metrics-url', 'http://x/metrics'], '--metrics-url, --probe needs the llm or server target'],
   [['--metrics-url', 'not a url'], '--metrics-url is not a URL'],

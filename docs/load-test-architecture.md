@@ -401,6 +401,38 @@ What it showed about the loader, not capacity:
 - **The prefix cache serves 91% of prompt tokens:** the system message, examples and context are shared across requests, which is what makes a 3,500-token prompt cheap to repeat.
 - **A fast model raises the useful share:** 85.5%, against 54 to 64% on Gemini with the same typing; every aborted request here had at most 173 ms of allowed time.
 
+## GPU, loader health and the abort check (change `first-capacity-run`)
+
+**GPU sampling** (`--gpu-ssh <user>@<host>:<port>`, from `uvx vastai==1.8.3 ssh-url <instance>`). Before the run, one short SSH session reads `nvidia-smi --query-gpu=name,driver_version,memory.total`; a failure within 15 s stops the run, naming `--gpu-ssh` and the SSH error. During the run, one long session runs `nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu --format=csv,noheader,nounits -l 2`, and each line goes to `gpu.jsonl`. SSH runs in batch mode with the sibling project's known-hosts file (`~/.config/vastai/known_hosts`, new keys accepted) and the account's key already on the instance; nothing is installed there. The report's GPU section gives per stage, after the warm-up: samples read and failed, utilization mean and max, memory used max (GiB and share), power mean and max, temperature max, and whether the session ended early. Utilization is the share of time any kernel ran, not how full the card was: read it with vLLM's running and waiting counts.
+
+**Loader health.** `run.ts` measures the loader's own event loop delay (`perf_hooks.monitorEventLoopDelay`, 10 ms resolution), reset when each stage's warm-up ends and read when it ends; the report's loader table gives p99 and max per stage. A stage with a p99 above about 100 ms started rounds and aborts late and should be read with care.
+
+**Abort check** (`npm run load:abort-check`). 20 chat completions asking for a long story (`max_tokens: 600`) go straight to `LLM_URL`; after 2 s all are aborted. vLLM's `vllm:num_requests_running` is read before sending, just before the abort, and 1 and 3 s after. The verdict: unclear if the count just before the abort is not at least 10 above the count before sending (the generations were not running); otherwise aborts reach vLLM when the count 3 s after is back at or below the start, do not when it is still 10 or more above it, and unclear in between.
+
+**Dry run without a GPU** (2026-11-10): the scratchpad fake vLLM and a fake `ssh` first on `PATH` that answers like `nvidia-smi`; `npm run load -- --agents 25,50 --stage 60 --warmup 10 --vllm-metrics --probe --price 1.5 --gpu-ssh root@127.0.0.1:2222` wrote `gpu.jsonl` (25 samples per stage), filled the GPU section and the loader table (p99 11.6 ms at 25 agents, 11.9 ms at 50), and kept the key out of the folder. The abort check against the fake showed why its verdict needs the count at the abort: the fake answers in under a second, so nothing was running when it aborted, and the rule now says unclear there.
+
+### Plan for the rented capacity session
+
+At most 3 hours from renting, on one RTX PRO 6000 WS at about $1.5/h:
+
+```sh
+# in ../SpellCheckingPrototype
+deploy/vastai/status.sh                      # if refused: uvx vastai==1.8.3 tfa send-email, then tfa login
+deploy/vastai/search.sh --min-gb 80
+deploy/vastai/start.sh <offer> google/gemma-4-26B-A4B-it
+deploy/vastai/tunnel.sh                      # own terminal, kept open
+deploy/vastai/check.sh
+uvx vastai==1.8.3 ssh-url <instance>         # ssh://user@host:port -> --gpu-ssh user@host:port
+
+# in this project, with LLM_URL=http://127.0.0.1:8000/v1/chat/completions, MODEL=google/gemma-4-26B-A4B-it, any LLM_API_KEY
+npm run load -- --agents 25,50,100,200,300 --stage 180 --warmup 30 --vllm-metrics --probe --gpu-ssh <user@host:port> --price <$/h>
+npm run load:abort-check
+
+# in ../SpellCheckingPrototype, at once
+deploy/vastai/destroy.sh
+deploy/vastai/status.sh                      # no instance running
+```
+
 ## Running it
 
 ```sh

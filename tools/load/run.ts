@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { resolveExtensionlessImportsAsTs } from '../resolve-extensionless-imports.ts';
 
 resolveExtensionlessImportsAsTs();
@@ -22,10 +23,23 @@ try {
     repository: repositoryFacts(),
     interruptSignal: interrupt.signal,
     log: (line) => console.log(line),
+    loopDelayMeter: createLoopDelayMeter(),
   });
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
+}
+
+function createLoopDelayMeter(): { reset(): void; read(): { p99Ms: number; maxMs: number } } {
+  const histogram = monitorEventLoopDelay({ resolution: 10 });
+  histogram.enable();
+  const toMs = (nanoseconds: number) => Math.round(nanoseconds / 1e5) / 10;
+  return {
+    reset: () => histogram.reset(),
+    read: () => {
+      return { p99Ms: toMs(histogram.percentile(99)), maxMs: toMs(histogram.max) };
+    },
+  };
 }
 
 function repositoryFacts(): { commit: string; hasUncommittedChanges: boolean } {

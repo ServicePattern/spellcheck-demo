@@ -35,6 +35,13 @@ export interface RunSettings {
   metricsUrl: string | undefined;
   withProbe: boolean;
   pricePerHour: number | undefined;
+  gpuSsh: SshAddress | undefined;
+}
+
+export interface SshAddress {
+  user: string;
+  host: string;
+  port: number;
 }
 
 export interface Settings {
@@ -133,6 +140,7 @@ export const USAGE = `Usage: npm run load -- --agents <levels> [flags]
   --metrics-url <url>      where to read them (default /metrics on the origin of LLM_URL)
   --probe                  send a one-token probe straight to LLM_URL every 10 s (llm or server target)
   --price <$/h>            hourly price of the instance, for the cost per agent-hour
+  --gpu-ssh <user@host:port>  sample the instance's GPU with nvidia-smi over SSH every 2 s
 
 Typing inputs (assumed): ${TYPING_INPUTS.map((input) => `--${input.flag} ${input.defaultValue}`).join(', ')}`;
 
@@ -166,6 +174,7 @@ function parseFlags(args: string[]): { values: FlagValues } {
     'fake-latency-ms',
     'metrics-url',
     'price',
+    'gpu-ssh',
     ...TYPING_INPUTS.map((input) => input.flag),
   ];
   const options = Object.fromEntries(stringFlags.map((flag) => [flag, { type: 'string' as const }]));
@@ -205,6 +214,20 @@ function readRunSettings(values: FlagValues): RunSettings {
     url: readText(values.url),
     fakeLatencyMs: readNumber(values['fake-latency-ms'], 'fake-latency-ms', 'positive', 600),
     ...readInstanceFlags(values, target),
+    gpuSsh: values['gpu-ssh'] === undefined ? undefined : readSshAddress(values['gpu-ssh']),
+  };
+}
+
+function readSshAddress(value: string | boolean): SshAddress {
+  const match = typeof value === 'string' ? /^([^@\s]+)@([^:@\s]+):(\d+)$/.exec(value) : null;
+  const port = match ? Number(match[3]) : 0;
+  if (!match || port < 1 || port > 65535) {
+    throw new Error(`--gpu-ssh must be <user>@<host>:<port> with a port from 1 to 65535, got ${String(value)}`);
+  }
+  return {
+    user: match[1],
+    host: match[2],
+    port,
   };
 }
 

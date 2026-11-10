@@ -18,7 +18,8 @@
     "typecheck": "tsc --noEmit",
     "test": "playwright test",
     "eval": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning tools/eval/spell-check.ts",
-    "load": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning tools/load/run.ts"
+    "load": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning tools/load/run.ts",
+    "load:abort-check": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning tools/load/abort-check-command.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

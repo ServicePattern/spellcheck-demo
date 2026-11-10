@@ -6,6 +6,7 @@ import { TYPING_INPUTS, type Settings, type TargetName } from './settings.ts';
 import type { ProbeRecord } from './probe.ts';
 import type { ServerFacts, UpstreamCall } from './targets.ts';
 import type { MetricKey, MetricSample } from './vllm-metrics.ts';
+import type { GpuReading, GpuSessionEnd, GpuValues } from './gpu.ts';
 
 export type EndReason = 'completed' | 'request cap' | 'interrupted';
 
@@ -14,6 +15,20 @@ export interface StagePlan {
   agents: number;
   startMs: number;
   endMs: number;
+  loopDelay?: LoopDelay;
+}
+
+export interface LoopDelay {
+  p99Ms: number;
+  maxMs: number;
+}
+
+export interface GpuRunFacts {
+  name: string;
+  driver: string;
+  gpuCount: number;
+  memoryTotalMiB: number;
+  sessionEnd: GpuSessionEnd | null;
 }
 
 export interface SourceCount {
@@ -42,6 +57,7 @@ export interface RunFacts {
   stages: StagePlan[];
   server: ServerFacts | null;
   vllm: VllmFacts | null;
+  gpu: GpuRunFacts | null;
 }
 
 export interface VllmFacts {
@@ -54,6 +70,7 @@ export interface RunMeasurements {
   upstreamCalls?: UpstreamCall[];
   samples?: MetricSample[];
   probes?: ProbeRecord[];
+  gpuReadings?: GpuReading[];
 }
 
 export type ActivityEvent = RoundEvent | MessageStartEvent | MessageSentEvent;
@@ -98,6 +115,21 @@ export interface StageFigures {
   vllm: VllmStageFigures | null;
   probe: ProbeStageFigures | null;
   costPerAgentHour: Figure;
+  gpu: GpuStageFigures | null;
+  loopDelayP99Ms: Figure;
+  loopDelayMaxMs: Figure;
+}
+
+export interface GpuStageFigures {
+  samplesRead: number;
+  samplesFailed: number;
+  utilizationMeanPercent: Figure;
+  utilizationMaxPercent: Figure;
+  memoryUsedMaxGiB: Figure;
+  memoryUsedMaxShare: Figure;
+  powerMeanWatts: Figure;
+  powerMaxWatts: Figure;
+  temperatureMaxCelsius: Figure;
 }
 
 export interface VllmStageFigures {
@@ -192,6 +224,9 @@ export function computeReport(
         vllm: facts.vllm ? vllmFigures(measurements.samples ?? [], window) : null,
         probe: facts.settings.run.withProbe ? probeFigures(measurements.probes ?? [], window) : null,
         costPerAgentHour: price === undefined ? null : round(price / plan.agents, 3),
+        gpu: facts.gpu ? gpuFigures(measurements.gpuReadings ?? [], window) : null,
+        loopDelayP99Ms: plan.loopDelay?.p99Ms ?? null,
+        loopDelayMaxMs: plan.loopDelay?.maxMs ?? null,
       };
     }),
   };
@@ -320,6 +355,39 @@ function prefixCacheHitRate(samples: MetricSample[]): Figure {
   const hits = counterIncrease(samples, 'prefixCacheHits');
   const queries = counterIncrease(samples, 'prefixCacheQueries');
   return hits && queries ? share(hits.increase, queries.increase) : null;
+}
+
+function gpuFigures(readings: GpuReading[], window: Window): GpuStageFigures {
+  const inWindow = readings.filter((reading) => reading.atMs >= window.startMs && reading.atMs < window.endMs);
+  const read = inWindow.flatMap((reading) => reading.values ? [reading.values] : []);
+  const valuesOf = (key: keyof GpuValues) => {
+    return read.flatMap((values) => values[key] === undefined ? [] : [values[key]]);
+  };
+  const meanOf = (key: keyof GpuValues) => {
+    const values = valuesOf(key);
+    return values.length ? round(values.reduce((sum, value) => sum + value, 0) / values.length, 1) : null;
+  };
+  const maxOf = (key: keyof GpuValues) => {
+    const values = valuesOf(key);
+    return values.length ? Math.max(...values) : null;
+  };
+  const withMemory = read.filter((values) => values.memoryUsedMiB !== undefined);
+  const fullest = withMemory.reduce<GpuValues | undefined>((most, values) => {
+    return !most || (values.memoryUsedMiB ?? 0) > (most.memoryUsedMiB ?? 0) ? values : most;
+  }, undefined);
+  const fullestUsed = fullest?.memoryUsedMiB;
+  const fullestTotal = fullest?.memoryTotalMiB;
+  return {
+    samplesRead: read.length,
+    samplesFailed: inWindow.length - read.length,
+    utilizationMeanPercent: meanOf('utilizationPercent'),
+    utilizationMaxPercent: maxOf('utilizationPercent'),
+    memoryUsedMaxGiB: fullestUsed === undefined ? null : round(fullestUsed / 1024, 1),
+    memoryUsedMaxShare: fullestUsed === undefined || !fullestTotal ? null : share(fullestUsed, fullestTotal),
+    powerMeanWatts: meanOf('powerWatts'),
+    powerMaxWatts: maxOf('powerWatts'),
+    temperatureMaxCelsius: maxOf('temperatureCelsius'),
+  };
 }
 
 function probeFigures(probes: ProbeRecord[], window: Window): ProbeStageFigures {
@@ -576,8 +644,82 @@ const PROBE_COLUMNS: [string, (figures: ProbeStageFigures) => string][] = [
   ['Round trip max ms', (figures) => formatNumber(figures.roundTripMaxMs)],
 ];
 
+const GPU_COLUMNS: [string, (figures: GpuStageFigures) => string][] = [
+  ['Samples', (figures) => String(figures.samplesRead)],
+  ['Failed samples', (figures) => String(figures.samplesFailed)],
+  ['Utilization mean %', (figures) => formatNumber(figures.utilizationMeanPercent)],
+  ['Utilization max %', (figures) => formatNumber(figures.utilizationMaxPercent)],
+  ['Memory used max GiB', (figures) => formatNumber(figures.memoryUsedMaxGiB)],
+  ['Memory used max', (figures) => formatShare(figures.memoryUsedMaxShare)],
+  ['Power mean W', (figures) => formatNumber(figures.powerMeanWatts)],
+  ['Power max W', (figures) => formatNumber(figures.powerMaxWatts)],
+  ['Temperature max °C', (figures) => formatNumber(figures.temperatureMaxCelsius)],
+];
+
 function instanceSections(report: Report): string[] {
-  return [...vllmSection(report), ...probeSection(report), ...costSection(report)];
+  return [
+    ...vllmSection(report),
+    ...gpuSection(report),
+    ...probeSection(report),
+    ...costSection(report),
+    ...loaderSection(report),
+  ];
+}
+
+function gpuSection(report: Report): string[] {
+  const { gpu } = report.facts;
+  if (!gpu) {
+    return [];
+  }
+  const sessionEnd = gpu.sessionEnd
+    ? `The GPU session ended early, at ${Math.round(gpu.sessionEnd.atMs / 1000)} s: ${gpu.sessionEnd.reason}.`
+    : 'The GPU session ran to the end of the run.';
+  return [
+    '## GPU, from nvidia-smi',
+    '',
+    `${gpu.gpuCount} × ${gpu.name}, driver ${gpu.driver}, ${round(gpu.memoryTotalMiB / 1024, 1)} GiB in all. `
+      + 'Read every 2 s over SSH, over the samples taken after each stage\'s warm-up. '
+      + 'Utilization is the share of time a kernel was running, not how full the card was.',
+    '',
+    sessionEnd,
+    '',
+    table(
+      ['Stage', 'Agents', ...GPU_COLUMNS.map(([heading]) => heading)],
+      report.stages.flatMap((stage) => {
+        const figures = stage.gpu;
+        if (!figures) {
+          return [];
+        }
+        return [[String(stage.stage), String(stage.agents), ...GPU_COLUMNS.map(([, cell]) => cell(figures))]];
+      }),
+    ),
+    '',
+  ];
+}
+
+function loaderSection(report: Report): string[] {
+  if (report.stages.every((stage) => stage.loopDelayP99Ms === null)) {
+    return [];
+  }
+  return [
+    '## Loader',
+    '',
+    'Delay of the loader\'s own event loop over each stage after its warm-up. A high delay means rounds, aborts '
+      + 'and samples started late in that stage, and its figures should be read with care.',
+    '',
+    table(
+      ['Stage', 'Agents', 'Event loop delay p99 ms', 'Event loop delay max ms'],
+      report.stages.map((stage) => {
+        return [
+          String(stage.stage),
+          String(stage.agents),
+          formatNumber(stage.loopDelayP99Ms),
+          formatNumber(stage.loopDelayMaxMs),
+        ];
+      }),
+    ),
+    '',
+  ];
 }
 
 function vllmSection(report: Report): string[] {

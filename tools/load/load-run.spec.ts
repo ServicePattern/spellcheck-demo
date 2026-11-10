@@ -340,3 +340,86 @@ test('with vLLM metrics pointed at an endpoint without them the run stops before
     globalThis.fetch = realFetch;
   }
 });
+
+const GPU_STAND_IN = [
+  'const isFacts = process.argv[1].includes("name,driver_version");',
+  'if (isFacts) {',
+  '  console.log("NVIDIA RTX PRO 6000 Blackwell Workstation Edition, 580.95.05, 97887");',
+  '} else {',
+  '  console.log("0, 35, 52000, 97887, 210.5, 55");',
+  '  setInterval(() => console.log("0, 40, 52100, 97887, 220.0, 56"), 20);',
+  '  process.on("SIGTERM", () => process.exit(0));',
+  '}',
+].join('\n');
+
+function gpuStandIn(script: string) {
+  return (remoteCommand: string) => {
+    return { command: process.execPath, args: ['-e', script, remoteCommand] };
+  };
+}
+
+async function gpuRun(script: string, out: string, withMeter: boolean) {
+  const { clock, runUntilIdle } = createVirtualClock();
+  let stageReads = 0;
+  return runLoad({
+    args: [
+      '--target', 'fake',
+      '--agents', '2,4',
+      '--stage', '60',
+      '--warmup', '10',
+      '--gpu-ssh', 'root@127.0.0.1:2222',
+      '--chats', await chatsFolder(),
+      '--out', out,
+    ],
+    environment: {},
+    clock,
+    driveClock: runUntilIdle,
+    startedAt: new Date('2026-11-10T12:00:00.000Z'),
+    repository: { commit: 'abc1234', hasUncommittedChanges: false },
+    log: () => undefined,
+    gpuCommandFor: gpuStandIn(script),
+    loopDelayMeter: withMeter
+      ? {
+        reset: () => undefined,
+        read: () => {
+          stageReads += 1;
+          return { p99Ms: 10 * stageReads, maxMs: 25 * stageReads };
+        },
+      }
+      : undefined,
+  });
+}
+
+test('with --gpu-ssh the run checks the GPU first, writes gpu.jsonl and names the GPU in its facts', async () => {
+  const out = await mkdtemp(join(tmpdir(), 'load-runs-'));
+  const result = await gpuRun(GPU_STAND_IN, out, true);
+  expect(await readdir(result.folder)).toContain('gpu.jsonl');
+  expect(result.report.facts.gpu).toEqual({
+    name: 'NVIDIA RTX PRO 6000 Blackwell Workstation Edition',
+    driver: '580.95.05',
+    gpuCount: 1,
+    memoryTotalMiB: 97887,
+    sessionEnd: null,
+  });
+  expect(result.report.facts.stages.map((stage) => stage.loopDelay)).toEqual([
+    { p99Ms: 10, maxMs: 25 },
+    { p99Ms: 20, maxMs: 50 },
+  ]);
+  expect(result.report.facts.settings.run.gpuSsh).toEqual({
+    user: 'root',
+    host: '127.0.0.1',
+    port: 2222,
+  });
+});
+
+test('without a meter the loop delay is absent, and a GPU check that fails leaves no run folder', async () => {
+  const out = await mkdtemp(join(tmpdir(), 'load-runs-'));
+  const withoutMeter = await gpuRun(GPU_STAND_IN, out, false);
+  expect(withoutMeter.report.facts.stages.every((stage) => stage.loopDelay === undefined)).toBe(true);
+  const emptyOut = await mkdtemp(join(tmpdir(), 'load-runs-'));
+  const refused = 'console.error("ssh: connect to host 127.0.0.1 port 2222: Connection refused"); process.exit(255);';
+  await expect(gpuRun(refused, emptyOut, false)).rejects.toThrow(
+    '--gpu-ssh: could not read the GPU (ssh: connect to host 127.0.0.1 port 2222: Connection refused)',
+  );
+  expect(await readdir(emptyOut)).toEqual([]);
+});

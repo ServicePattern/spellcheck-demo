@@ -14,6 +14,7 @@ import {
   type UpstreamGroupFigures,
 } from './report.ts';
 import { parseSettings } from './settings.ts';
+import type { GpuReading } from './gpu.ts';
 import type { ProbeRecord } from './probe.ts';
 import type { UpstreamCall } from './targets.ts';
 import type { MetricSample } from './vllm-metrics.ts';
@@ -41,6 +42,7 @@ function factsFor(flags: string[], stages: RunFacts['stages']): RunFacts {
     stages,
     server: null,
     vllm: null,
+    gpu: null,
   };
 }
 
@@ -737,4 +739,125 @@ test('vLLM v0.31.0 context-length error, as served by a real instance, is counte
   const failed = record('failed', { reason: 'HTTP 400: ' + body.error.message });
   expect(isContextLengthRejection(failed)).toBe(true);
   expect(isContextLengthRejection(record('failed', { reason: 'HTTP 429: rate limited' }))).toBe(false);
+});
+
+function gpuFacts(flags: string[] = []): RunFacts {
+  return {
+    ...instanceFacts(flags),
+    gpu: {
+      name: 'NVIDIA RTX PRO 6000 Blackwell Workstation Edition',
+      driver: '580.95.05',
+      gpuCount: 1,
+      memoryTotalMiB: 97887,
+      sessionEnd: null,
+    },
+  };
+}
+
+function gpuReading(atMs: number, utilizationPercent: number, memoryUsedMiB: number, powerWatts: number): GpuReading {
+  return {
+    atMs,
+    index: 0,
+    values: {
+      utilizationPercent,
+      memoryUsedMiB,
+      memoryTotalMiB: 97887,
+      powerWatts,
+      temperatureCelsius: 50 + utilizationPercent / 10,
+    },
+  };
+}
+
+test('the GPU figures of a stage come from its readings after warm-up', () => {
+  const gpuReadings = [
+    gpuReading(370000, 99, 99000, 600),
+    gpuReading(400000, 40, 80000, 200),
+    gpuReading(440000, 70, 88000, 300),
+    { atMs: 450000, error: 'unreadable nvidia-smi line: garbage' },
+    gpuReading(480000, 95, 87000, 450),
+    gpuReading(530000, 75, 85000, 350),
+  ];
+  const stage = computeReport([], [], gpuFacts(), { gpuReadings }).stages[2];
+  expect(stage.gpu).toEqual({
+    samplesRead: 4,
+    samplesFailed: 1,
+    utilizationMeanPercent: 70,
+    utilizationMaxPercent: 95,
+    memoryUsedMaxGiB: 85.9,
+    memoryUsedMaxShare: 0.899,
+    powerMeanWatts: 325,
+    powerMaxWatts: 450,
+    temperatureMaxCelsius: 59.5,
+  });
+});
+
+test('a stage with no GPU readings has its figures absent, and a run without --gpu-ssh has no GPU section', () => {
+  const stage = computeReport([], [], gpuFacts(), { gpuReadings: [] }).stages[0];
+  expect(stage.gpu).toMatchObject({
+    samplesRead: 0,
+    utilizationMeanPercent: null,
+    memoryUsedMaxGiB: null,
+    memoryUsedMaxShare: null,
+  });
+  const report = computeReport([], [], instanceFacts([]), { gpuReadings: [gpuReading(40000, 50, 1000, 100)] });
+  expect(report.stages[0].gpu).toBeNull();
+  expect(renderMarkdown(report)).not.toContain('## GPU');
+});
+
+test('an early end of the GPU session is stated in its section', () => {
+  const facts = gpuFacts();
+  const ended: RunFacts = {
+    ...facts,
+    gpu: facts.gpu && {
+      ...facts.gpu,
+      sessionEnd: { atMs: 250000, reason: 'ended with code 255: Connection closed by remote host.' },
+    },
+  };
+  const markdown = renderMarkdown(computeReport([], [], ended, { gpuReadings: [] }));
+  expect(markdown).toContain('The GPU session ended early, at 250 s: ended with code 255: Connection closed by remote host.');
+  expect(markdown).toContain('1 × NVIDIA RTX PRO 6000 Blackwell Workstation Edition, driver 580.95.05, 95.6 GiB in all.');
+});
+
+test('the loader delay is shown per stage when measured, and absent otherwise', () => {
+  const facts = instanceFacts([]);
+  const measured: RunFacts = {
+    ...facts,
+    stages: facts.stages.map((stage, index) => {
+      return { ...stage, loopDelay: { p99Ms: 4 + index * 4, maxMs: 20 + index * 10 } };
+    }),
+  };
+  const report = computeReport([], [], measured);
+  expect(report.stages.map((stage) => stage.loopDelayP99Ms)).toEqual([4, 8, 12]);
+  expect(renderMarkdown(report)).toContain('| 3 | 50 | 12 | 40 |');
+  const unmeasured = computeReport([], [], facts);
+  expect(unmeasured.stages[0].loopDelayP99Ms).toBeNull();
+  expect(renderMarkdown(unmeasured)).not.toContain('## Loader');
+});
+
+test('every GPU figure in report.md matches report.json', () => {
+  const gpuReadings = [gpuReading(40000, 33, 52000, 210.5), gpuReading(60000, 47, 53000, 230)];
+  const report = computeReport([], [], gpuFacts(), { gpuReadings });
+  const markdown = renderMarkdown(report);
+  const json = JSON.parse(renderJson(report)) as Report;
+  const percent = (value: number | null) => value === null ? '—' : (value * 100).toFixed(1) + '%';
+  const plain = (value: number | null) => value === null ? '—' : String(value);
+  for (const stage of json.stages) {
+    const gpu = stage.gpu;
+    const row = [
+      stage.stage,
+      stage.agents,
+      gpu?.samplesRead,
+      gpu?.samplesFailed,
+      plain(gpu?.utilizationMeanPercent ?? null),
+      plain(gpu?.utilizationMaxPercent ?? null),
+      plain(gpu?.memoryUsedMaxGiB ?? null),
+      percent(gpu?.memoryUsedMaxShare ?? null),
+      plain(gpu?.powerMeanWatts ?? null),
+      plain(gpu?.powerMaxWatts ?? null),
+      plain(gpu?.temperatureMaxCelsius ?? null),
+    ];
+    expect(markdown).toContain('| ' + row.join(' | ') + ' |');
+  }
+  expect(json.stages[0].gpu?.utilizationMeanPercent).toBe(40);
+  expect(json.facts.gpu?.name).toBe('NVIDIA RTX PRO 6000 Blackwell Workstation Edition');
 });

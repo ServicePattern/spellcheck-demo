@@ -18,9 +18,20 @@ import {
   type SourceCount,
   type SourcesFacts,
   type StagePlan,
+  type LoopDelay,
   type VllmFacts,
 } from './report.ts';
-import { parseSettings, type Settings } from './settings.ts';
+import {
+  readGpuFacts,
+  sshCommandFor,
+  startGpuSession,
+  type CommandFor,
+  type GpuFacts,
+  type GpuReading,
+  type GpuSession,
+  type GpuSessionEnd,
+} from './gpu.ts';
+import { parseSettings, type Settings, type SshAddress } from './settings.ts';
 import { createTarget, readLLMSettings, type LLMSettings, type Target } from './targets.ts';
 import { createTypingModel } from './typing-model.ts';
 import {
@@ -48,6 +59,13 @@ export interface LoadRunInput {
   log: (line: string) => void;
   fetchText?: FetchText;
   probeFetch?: ProbeFetch;
+  gpuCommandFor?: CommandFor;
+  loopDelayMeter?: LoopDelayMeter;
+}
+
+export interface LoopDelayMeter {
+  reset(): void;
+  read(): LoopDelay;
 }
 
 export interface LoadRunResult {
@@ -60,6 +78,7 @@ export const REPORT_MARKDOWN_FILE = 'report.md';
 export const REPORT_JSON_FILE = 'report.json';
 export const METRICS_FILE = 'metrics.jsonl';
 export const PROBE_FILE = 'probe.jsonl';
+export const GPU_FILE = 'gpu.jsonl';
 const MAX_START_SPREAD_MS = 30000;
 
 type StopReason = Exclude<EndReason, 'completed'> | 'end';
@@ -71,6 +90,12 @@ interface RunSetup {
   target: Target;
   llm: LLMSettings | undefined;
   vllm: VllmFacts | null;
+  gpu: GpuSetup | undefined;
+}
+
+interface GpuSetup {
+  commandFor: CommandFor;
+  facts: GpuFacts;
 }
 
 interface StagesDone {
@@ -81,6 +106,8 @@ interface StagesDone {
   stopReason: StopReason;
   samples: MetricSample[];
   probes: ProbeRecord[];
+  gpuReadings: GpuReading[];
+  gpuSessionEnd: GpuSessionEnd | undefined;
 }
 
 export async function runLoad(input: LoadRunInput): Promise<LoadRunResult> {
@@ -89,6 +116,7 @@ export async function runLoad(input: LoadRunInput): Promise<LoadRunResult> {
   const isWatchingInstance = settings.run.withVllmMetrics || settings.run.withProbe;
   const llm = isWatchingInstance ? readLLMSettings(settings.run, input.environment) : undefined;
   const vllm = llm && settings.run.withVllmMetrics ? await checkMetrics(input, llm, settings.run.metricsUrl) : null;
+  const gpu = settings.run.gpuSsh ? await checkGpu(input, settings.run.gpuSsh) : undefined;
   const target = await createTarget(settings.run, input.environment, input.clock, settings.typing.timeoutMs);
   const setup: RunSetup = {
     input,
@@ -97,6 +125,7 @@ export async function runLoad(input: LoadRunInput): Promise<LoadRunResult> {
     target,
     llm,
     vllm,
+    gpu,
   };
   const sent = { count: 0 };
   let stagesDone: StagesDone;
@@ -118,11 +147,34 @@ async function checkMetrics(input: LoadRunInput, llm: LLMSettings, metricsUrl: s
   };
 }
 
+async function checkGpu(input: LoadRunInput, address: SshAddress): Promise<GpuSetup> {
+  const commandFor = input.gpuCommandFor ?? sshCommandFor(address);
+  return {
+    commandFor,
+    facts: await readGpuFacts(commandFor),
+  };
+}
+
 function watchInstance(setup: RunSetup, folder: string, stopSignal: AbortSignal) {
-  const { input, llm, vllm } = setup;
+  const { input, llm, vllm, gpu } = setup;
   const samples: MetricSample[] = [];
   const probes: ProbeRecord[] = [];
+  const gpuReadings: GpuReading[] = [];
   const watchers: Promise<void>[] = [];
+  let gpuSession: GpuSession | undefined;
+  if (gpu) {
+    const file = createJsonLinesFile(join(folder, GPU_FILE));
+    const session = startGpuSession({
+      commandFor: gpu.commandFor,
+      clock: input.clock,
+      onReading: (reading) => {
+        gpuReadings.push(reading);
+        file.write(reading);
+      },
+    });
+    gpuSession = session;
+    watchers.push(whenAborted(stopSignal).then(() => session.stop()).finally(() => file.close()));
+  }
   if (vllm) {
     const file = createJsonLinesFile(join(folder, METRICS_FILE));
     watchers.push(runSampler({
@@ -152,8 +204,20 @@ function watchInstance(setup: RunSetup, folder: string, stopSignal: AbortSignal)
   return {
     samples,
     probes,
+    gpuReadings,
+    gpuSessionEnd: () => gpuSession?.ended(),
     watching: Promise.all(watchers),
   };
+}
+
+function whenAborted(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    signal.addEventListener('abort', () => resolve(), { once: true });
+  });
 }
 
 async function runStagesOnTarget(setup: RunSetup, sent: { count: number }): Promise<StagesDone> {
@@ -212,7 +276,13 @@ async function runStagesOnTarget(setup: RunSetup, sent: { count: number }): Prom
       for (let agentNumber = agents.length + 1; agentNumber <= level; agentNumber++) {
         agents.push(startAgent(agentNumber, startMs));
       }
+      await clock.sleep(startMs + warmupMs - clock.now(), stop.signal).catch(() => undefined);
+      input.loopDelayMeter?.reset();
       await clock.sleep(startMs + stageMs - clock.now(), stop.signal).catch(() => undefined);
+      const plan = stagePlans.at(-1);
+      if (plan && input.loopDelayMeter) {
+        plan.loopDelay = input.loopDelayMeter.read();
+      }
     }
     const endedAt = clock.now();
     stopWith('end');
@@ -248,6 +318,8 @@ async function runStagesOnTarget(setup: RunSetup, sent: { count: number }): Prom
   return {
     samples: instance.samples,
     probes: instance.probes,
+    gpuReadings: instance.gpuReadings,
+    gpuSessionEnd: instance.gpuSessionEnd(),
     folder,
     records: recorder.records,
     activity,
@@ -274,10 +346,12 @@ async function writeReport(setup: RunSetup, stagesDone: StagesDone, sentRequests
     stages: stagesDone.stagePlans,
     server: targetFacts?.server ?? null,
     vllm: setup.vllm,
+    gpu: setup.gpu ? { ...setup.gpu.facts, sessionEnd: stagesDone.gpuSessionEnd ?? null } : null,
   }, {
     upstreamCalls: targetFacts?.upstreamCalls,
     samples: stagesDone.samples,
     probes: stagesDone.probes,
+    gpuReadings: stagesDone.gpuReadings,
   });
   await writeFile(join(folder, REPORT_MARKDOWN_FILE), renderMarkdown(report));
   await writeFile(join(folder, REPORT_JSON_FILE), renderJson(report));
