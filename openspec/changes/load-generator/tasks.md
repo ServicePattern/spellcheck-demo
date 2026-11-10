@@ -21,8 +21,8 @@
 
 ## 4. Clock and targets
 
-- [ ] 4.1 Implement `tools/load/clock.ts`: the real clock and the virtual clock with its driver, both with abortable sleep; verify with `clock.spec.ts` that virtual sleeps wake in time order, an aborted sleep rejects at once, and a virtual hour passes in milliseconds
-- [ ] 4.2 Implement `tools/load/targets.ts`: the `llm` target from `createOpenAIChatClient` with the check for `LLM_API_KEY`, `MODEL`, `LLM_URL`, and the `fake` target (latency drawn from the seed on the clock, honours abort, well-formed answer per kind, some empty completions); verify with `targets.spec.ts` that the fake's answers parse with `parseMistakes` and `parseAutoCompletion`, an aborted fake request ends at the abort time, and missing settings are named
+- [x] 4.1 Implement `tools/load/clock.ts`: the real clock and the virtual clock with its driver, both with abortable sleep; verify with `clock.spec.ts` that virtual sleeps wake in time order, an aborted sleep rejects at once, and a virtual hour passes in milliseconds
+- [x] 4.2 Implement `tools/load/targets.ts`: the `llm` target from `createOpenAIChatClient` with the check for `LLM_API_KEY`, `MODEL`, `LLM_URL`, and the `fake` target (latency drawn from the seed on the clock, honours abort, well-formed answer per kind, some empty completions); verify with `targets.spec.ts` that the fake's answers parse with `parseMistakes` and `parseAutoCompletion`, an aborted fake request ends at the abort time, and missing settings are named
 
 ## 5. Agent
 
