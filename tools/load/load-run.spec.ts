@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
-import { createRealClock, createVirtualClock } from './clock.ts';
+import { createRealClock, createVirtualClock, type Clock } from './clock.ts';
 import { runLoad, type LoadRunResult } from './load-run.ts';
 import type { RequestRecord } from './recorder.ts';
 import type { Report } from './report.ts';
@@ -207,4 +207,136 @@ test('through the real server with an unreachable LLM every request fails with a
   }))].join('\n');
   expect(everything).not.toContain(key);
   expect(everything).not.toMatch(/Basic [A-Za-z0-9+/=]{8,}|load-[0-9a-f]{8}/);
+});
+
+function vllmMetricsText(running: number): string {
+  return [
+    '# TYPE vllm:num_requests_running gauge',
+    `vllm:num_requests_running{engine="0",model_name="m"} ${running}`,
+    'vllm:num_requests_waiting{engine="0",model_name="m"} 0',
+    'vllm:kv_cache_usage_perc{engine="0",model_name="m"} 0.1',
+    `vllm:prompt_tokens_total{engine="0",model_name="m"} ${running * 1000}`,
+    `vllm:generation_tokens_total{engine="0",model_name="m"} ${running * 50}`,
+  ].join('\n');
+}
+
+function fakeVllmFetch(clock: Clock, calls: { chat: number; probes: number; metrics: number }): typeof fetch {
+  return async (input, init) => {
+    const url = String(input);
+    if (url.endsWith('/metrics')) {
+      calls.metrics += 1;
+      return new Response(vllmMetricsText(calls.chat % 7));
+    }
+    const body = JSON.parse(String(init?.body)) as { max_tokens?: number };
+    const isProbe = body.max_tokens === 1;
+    if (isProbe) {
+      calls.probes += 1;
+    } else {
+      calls.chat += 1;
+    }
+    try {
+      await clock.sleep(isProbe ? 150 : 600, init?.signal ?? undefined);
+    } catch {
+      throw new DOMException('This operation was aborted', 'AbortError');
+    }
+    const content = isProbe ? 'Hi' : '{"mistakes": []}';
+    return Response.json({ choices: [{ message: { content } }] });
+  };
+}
+
+test('with vLLM metrics and the probe the run writes both files, keeps probes outside the cap and never the key', async () => {
+  const { clock, runUntilIdle } = createVirtualClock();
+  const calls = {
+    chat: 0,
+    probes: 0,
+    metrics: 0,
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = fakeVllmFetch(clock, calls);
+  try {
+    const out = await mkdtemp(join(tmpdir(), 'load-runs-'));
+    const key = 'vllm-test-key-123456';
+    const result = await runLoad({
+      args: [
+        '--agents', '3',
+        '--stage', '180',
+        '--vllm-metrics',
+        '--probe',
+        '--price', '1.43',
+        '--max-requests', '50',
+        '--chats', await chatsFolder(),
+        '--out', out,
+      ],
+      environment: {
+        LLM_API_KEY: key,
+        MODEL: 'google/gemma-4-26B-A4B-it',
+        LLM_URL: 'http://127.0.0.1:8000/v1/chat/completions',
+      },
+      clock,
+      driveClock: runUntilIdle,
+      startedAt: new Date('2026-11-10T12:00:00.000Z'),
+      repository: { commit: 'abc1234', hasUncommittedChanges: false },
+      log: () => undefined,
+    });
+    const files = (await readdir(result.folder)).sort();
+    expect(files).toEqual(['metrics.jsonl', 'probe.jsonl', 'report.json', 'report.md', 'requests.jsonl']);
+    expect(result.sentRequests).toBe(50);
+    expect(await recordsOf(result.folder)).toHaveLength(50);
+    expect(calls.chat).toBe(50);
+    expect(calls.probes).toBeGreaterThan(2);
+    const probeLines = (await readFile(join(result.folder, 'probe.jsonl'), 'utf8')).trim().split('\n');
+    expect(probeLines.length).toBe(calls.probes);
+    expect(JSON.parse(probeLines[0])).toEqual({
+      sentAtMs: 0,
+      roundTripMs: 150,
+      outcome: 'answered',
+    });
+    const sampleLines = (await readFile(join(result.folder, 'metrics.jsonl'), 'utf8')).trim().split('\n');
+    expect(sampleLines.length).toBeGreaterThan(5);
+    expect(JSON.parse(sampleLines[1])).toMatchObject({ atMs: 2000, values: { waiting: 0, cacheUsage: 0.1 } });
+    expect(result.report.facts.vllm).toEqual({
+      metricsUrl: 'http://127.0.0.1:8000/metrics',
+      metricsNotFound: ['prefixCacheQueries', 'prefixCacheHits'],
+      namesUsed: {
+        running: 'vllm:num_requests_running',
+        waiting: 'vllm:num_requests_waiting',
+        cacheUsage: 'vllm:kv_cache_usage_perc',
+        promptTokens: 'vllm:prompt_tokens_total',
+        generationTokens: 'vllm:generation_tokens_total',
+      },
+    });
+    for (const file of files) {
+      expect(await readFile(join(result.folder, file), 'utf8')).not.toContain(key);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('with vLLM metrics pointed at an endpoint without them the run stops before any request and makes no folder', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('Not Found', { status: 404 });
+  try {
+    const out = await mkdtemp(join(tmpdir(), 'load-runs-'));
+    const { clock, runUntilIdle } = createVirtualClock();
+    const running = runLoad({
+      args: ['--agents', '1', '--vllm-metrics', '--chats', await chatsFolder(), '--out', out],
+      environment: {
+        LLM_API_KEY: 'k',
+        MODEL: 'gemini-3.5-flash-lite',
+        LLM_URL: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      },
+      clock,
+      driveClock: runUntilIdle,
+      startedAt: new Date('2026-11-10T12:00:00.000Z'),
+      repository: { commit: 'abc1234', hasUncommittedChanges: false },
+      log: () => undefined,
+    });
+    await expect(running).rejects.toThrow(
+      'No vLLM metrics at https://generativelanguage.googleapis.com/metrics (HTTP 404). Point --metrics-url',
+    );
+    expect(await readdir(out)).toEqual([]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

@@ -28,6 +28,10 @@ test('every flag has its default', () => {
     model: undefined,
     url: undefined,
     fakeLatencyMs: 600,
+    withVllmMetrics: false,
+    metricsUrl: undefined,
+    withProbe: false,
+    pricePerHour: undefined,
   });
   expect(settings.setFlags).toEqual(['target', 'agents', 'stage']);
 });
@@ -69,7 +73,30 @@ test('agent levels must rise', () => {
   expect(() => parseSettings(['--agents', '5,5'])).toThrow('--agents levels must rise');
 });
 
+test('the vLLM flags are read for the llm and server targets', () => {
+  const run = parseSettings([
+    '--agents', '3',
+    '--target', 'server',
+    '--vllm-metrics',
+    '--metrics-url', 'http://127.0.0.1:8000/metrics',
+    '--probe',
+    '--price', '1.43',
+  ]).run;
+  expect(run).toMatchObject({
+    withVllmMetrics: true,
+    metricsUrl: 'http://127.0.0.1:8000/metrics',
+    withProbe: true,
+    pricePerHour: 1.43,
+  });
+  expect(parseSettings(['--agents', '1', '--target', 'fake', '--price', '2']).run.pricePerHour).toBe(2);
+});
+
 const badValues: [string[], string][] = [
+  [['--target', 'fake', '--vllm-metrics'], '--vllm-metrics needs the llm or server target, not fake'],
+  [['--target', 'fake', '--probe', '--metrics-url', 'http://x/metrics'], '--metrics-url, --probe needs the llm or server target'],
+  [['--metrics-url', 'not a url'], '--metrics-url is not a URL'],
+  [['--price', '0'], '--price must be a positive number'],
+  [['--price', 'abc'], '--price must be a positive number'],
   [['--accept-share', '1.5'], '--accept-share must be a share from 0 to 1'],
   [['--arabic-share=-0.1'], '--arabic-share must be a share from 0 to 1'],
   [['--spell-check-only-share', 'some'], '--spell-check-only-share must be a share'],

@@ -31,6 +31,10 @@ export interface RunSettings {
   model: string | undefined;
   url: string | undefined;
   fakeLatencyMs: number;
+  withVllmMetrics: boolean;
+  metricsUrl: string | undefined;
+  withProbe: boolean;
+  pricePerHour: number | undefined;
 }
 
 export interface Settings {
@@ -125,6 +129,10 @@ export const USAGE = `Usage: npm run load -- --agents <levels> [flags]
   --trace                  also record the text sent and the raw answers
   --model, --url           override MODEL and LLM_URL
   --fake-latency-ms 600    median latency of the fake target
+  --vllm-metrics           sample vLLM's /metrics every 2 s (llm or server target)
+  --metrics-url <url>      where to read them (default /metrics on the origin of LLM_URL)
+  --probe                  send a one-token probe straight to LLM_URL every 10 s (llm or server target)
+  --price <$/h>            hourly price of the instance, for the cost per agent-hour
 
 Typing inputs (assumed): ${TYPING_INPUTS.map((input) => `--${input.flag} ${input.defaultValue}`).join(', ')}`;
 
@@ -156,13 +164,20 @@ function parseFlags(args: string[]): { values: FlagValues } {
     'model',
     'url',
     'fake-latency-ms',
+    'metrics-url',
+    'price',
     ...TYPING_INPUTS.map((input) => input.flag),
   ];
   const options = Object.fromEntries(stringFlags.map((flag) => [flag, { type: 'string' as const }]));
   try {
     return parseArgs({
       args,
-      options: { ...options, trace: { type: 'boolean' } },
+      options: {
+        ...options,
+        trace: { type: 'boolean' },
+        'vllm-metrics': { type: 'boolean' },
+        probe: { type: 'boolean' },
+      },
       strict: true,
     });
   } catch (error) {
@@ -173,9 +188,10 @@ function parseFlags(args: string[]): { values: FlagValues } {
 function readRunSettings(values: FlagValues): RunSettings {
   const stageSeconds = readNumber(values.stage, 'stage', 'positive', 180);
   const warmupSeconds = readWarmup(values.warmup, stageSeconds);
+  const target = readTarget(values.target);
   return {
     agentLevels: readAgentLevels(values.agents),
-    target: readTarget(values.target),
+    target,
     stageSeconds,
     warmupSeconds,
     seed: readSeed(values.seed),
@@ -188,7 +204,31 @@ function readRunSettings(values: FlagValues): RunSettings {
     model: readText(values.model),
     url: readText(values.url),
     fakeLatencyMs: readNumber(values['fake-latency-ms'], 'fake-latency-ms', 'positive', 600),
+    ...readInstanceFlags(values, target),
   };
+}
+
+type InstanceFlags = Pick<RunSettings, 'withVllmMetrics' | 'metricsUrl' | 'withProbe' | 'pricePerHour'>;
+
+function readInstanceFlags(values: FlagValues, target: TargetName): InstanceFlags {
+  const flags: InstanceFlags = {
+    withVllmMetrics: values['vllm-metrics'] === true,
+    metricsUrl: readText(values['metrics-url']),
+    withProbe: values.probe === true,
+    pricePerHour: values.price === undefined ? undefined : readNumber(values.price, 'price', 'positive', 0),
+  };
+  const usedLLMFlags = [
+    ...(flags.withVllmMetrics ? ['--vllm-metrics'] : []),
+    ...(flags.metricsUrl ? ['--metrics-url'] : []),
+    ...(flags.withProbe ? ['--probe'] : []),
+  ];
+  if (target === 'fake' && usedLLMFlags.length) {
+    throw new Error(`${usedLLMFlags.join(', ')} needs the llm or server target, not fake`);
+  }
+  if (flags.metricsUrl && !URL.canParse(flags.metricsUrl)) {
+    throw new Error(`--metrics-url is not a URL: ${flags.metricsUrl}`);
+  }
+  return flags;
 }
 
 function readAgentLevels(value: string | boolean | undefined): number[] {

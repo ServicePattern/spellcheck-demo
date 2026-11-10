@@ -12,7 +12,9 @@ import {
   type UpstreamGroupFigures,
 } from './report.ts';
 import { parseSettings } from './settings.ts';
+import type { ProbeRecord } from './probe.ts';
 import type { UpstreamCall } from './targets.ts';
+import type { MetricSample } from './vllm-metrics.ts';
 
 const STAGE_FLAGS = ['--target', 'fake', '--agents', '5', '--stage', '120', '--warmup', '20'];
 
@@ -36,6 +38,7 @@ function factsFor(flags: string[], stages: RunFacts['stages']): RunFacts {
     hasUncommittedChanges: false,
     stages,
     server: null,
+    vllm: null,
   };
 }
 
@@ -94,7 +97,7 @@ test('shares of outcomes are of counted requests', () => {
   });
   const markdown = renderMarkdown(computeReport(OUTCOME_MIX, [], ONE_STAGE));
   expect(markdown).toContain('| 1 | 5 | 200 |');
-  expect(markdown).toContain('| 75.0% | 20.0% | 3.0% | 1.0% | 1.0% |');
+  expect(markdown).toContain('| 75.0% | 20.0% | 3.0% | 1.0% | 1.0% | 0.0% |');
 });
 
 test('requests sent in warm-up and requests cut are in no figure', () => {
@@ -298,6 +301,7 @@ function expectedRow(stage: number, agents: number, figures: GroupFigures): stri
     percent(figures.timeoutShare),
     percent(figures.failedShare),
     percent(figures.unreadableShare),
+    percent(figures.contextLengthShare),
     plain(figures.latencyP50Ms),
     plain(figures.latencyP95Ms),
     plain(figures.latencyP99Ms),
@@ -378,7 +382,7 @@ test('unused upstream calls are the calls less the requests the client received'
     ...Array.from({ length: 30 }, (_, index) => upstreamCall('spell-check', 40000 + index * 1000, 700)),
     ...Array.from({ length: 30 }, (_, index) => upstreamCall('auto-completion', 40000 + index * 1000, 800)),
   ];
-  const [stage] = computeReport(records, [], serverFacts(), calls).stages;
+  const [stage] = computeReport(records, [], serverFacts(), { upstreamCalls: calls }).stages;
   expect(stage.all.requests).toBe(60);
   expect(stage.upstream?.all).toMatchObject({
     calls: 60,
@@ -390,7 +394,7 @@ test('unused upstream calls are the calls less the requests the client received'
   });
   expect(stage.upstream?.byKind['spell-check']).toMatchObject({ calls: 30, unusedShare: 0.3333 });
   expect(stage.upstream?.byKind['auto-completion']).toMatchObject({ calls: 30, unusedShare: 0.6 });
-  expect(renderMarkdown(computeReport(records, [], serverFacts(), calls))).toContain('| 46.7% | 45 |');
+  expect(renderMarkdown(computeReport(records, [], serverFacts(), { upstreamCalls: calls }))).toContain('| 46.7% | 45 |');
 });
 
 test('upstream calls started in warm-up are left out, errors are counted, and a 502 counts as received', () => {
@@ -406,7 +410,7 @@ test('upstream calls started in warm-up are left out, errors are counted, and a 
     upstreamCall('spell-check', 40200, 900),
     upstreamCall('spell-check', 40300, 1200),
   ];
-  const upstream = computeReport(records, [], serverFacts(), calls).stages[0].upstream;
+  const upstream = computeReport(records, [], serverFacts(), { upstreamCalls: calls }).stages[0].upstream;
   expect(upstream?.all).toMatchObject({
     calls: 3,
     errorShare: 0.3333,
@@ -417,7 +421,7 @@ test('upstream calls started in warm-up are left out, errors are counted, and a 
 });
 
 test('with no upstream calls the upstream figures are absent, and never below zero unused', () => {
-  const [stage] = computeReport(many(4, 'answered'), [], serverFacts(), []).stages;
+  const [stage] = computeReport(many(4, 'answered'), [], serverFacts(), { upstreamCalls: [] }).stages;
   expect(stage.upstream?.all).toEqual({
     calls: 0,
     answeredShare: null,
@@ -429,12 +433,12 @@ test('with no upstream calls the upstream figures are absent, and never below ze
     upstreamSeconds: 0,
   });
   const oneCall = [upstreamCall('spell-check', 40000, 100)];
-  const fewerCalls = computeReport(many(4, 'answered'), [], serverFacts(), oneCall);
+  const fewerCalls = computeReport(many(4, 'answered'), [], serverFacts(), { upstreamCalls: oneCall });
   expect(fewerCalls.stages[0].upstream?.all.unusedShare).toBe(0);
 });
 
 test('a run with another target has no upstream section', () => {
-  const report = computeReport(OUTCOME_MIX, [], ONE_STAGE, [upstreamCall('spell-check', 40000, 100)]);
+  const report = computeReport(OUTCOME_MIX, [], ONE_STAGE, { upstreamCalls: [upstreamCall('spell-check', 40000, 100)] });
   expect(report.stages[0].upstream).toBeNull();
   expect(renderMarkdown(report)).not.toContain('Upstream');
 });
@@ -448,7 +452,7 @@ test('every upstream figure in report.md matches report.json, and the server fac
       return upstreamCall('auto-completion', 42000 + index * 500, 900, index ? undefined : 'empty answer');
     }),
   ];
-  const report = computeReport(records, [], serverFacts(), calls);
+  const report = computeReport(records, [], serverFacts(), { upstreamCalls: calls });
   const markdown = renderMarkdown(report);
   const json = JSON.parse(renderJson(report)) as Report;
   const percent = (value: number | null) => value === null ? '—' : `${(value * 100).toFixed(1)}%`;
@@ -480,4 +484,247 @@ test('every upstream figure in report.md matches report.json, and the server fac
   expect(markdown).toContain('Server: port 51234, stopped by the loader');
   expect(markdown).toContain('Requests with no upstream line in the server\'s log: 2');
   expect(json.facts.server?.otherLines).toEqual(['http://127.0.0.1:51234, serving /x/dist/']);
+});
+
+function instanceFacts(flags: string[]): RunFacts {
+  const facts = factsFor(['--agents', '10,25,50', '--stage', '180', '--warmup', '30', ...flags], [
+    {
+      stage: 1,
+      agents: 10,
+      startMs: 0,
+      endMs: 180000,
+    },
+    {
+      stage: 2,
+      agents: 25,
+      startMs: 180000,
+      endMs: 360000,
+    },
+    {
+      stage: 3,
+      agents: 50,
+      startMs: 360000,
+      endMs: 540000,
+    },
+  ]);
+  return {
+    ...facts,
+    vllm: flags.includes('--vllm-metrics')
+      ? {
+        metricsUrl: 'http://127.0.0.1:8000/metrics',
+        metricsNotFound: ['prefixCacheQueries'],
+        namesUsed: {},
+      }
+      : null,
+  };
+}
+
+function sample(atMs: number, values: MetricSample['values']): MetricSample {
+  return { atMs, values };
+}
+
+test('the vLLM figures of a stage come from its samples after warm-up', () => {
+  const samples = [
+    sample(370000, { waiting: 50, generationTokens: 1 }),
+    sample(391000, {
+      waiting: 0,
+      running: 20,
+      cacheUsage: 0.2,
+      generationTokens: 120000,
+      promptTokens: 1000,
+    }),
+    sample(442000, {
+      waiting: 4,
+      running: 30,
+      cacheUsage: 0.4,
+    }),
+    { atMs: 460000, error: 'timeout' },
+    sample(490000, {
+      waiting: 12,
+      running: 40,
+      cacheUsage: 0.9,
+    }),
+    sample(539000, {
+      waiting: 8,
+      running: 30,
+      cacheUsage: 0.5,
+      generationTokens: 150000,
+      promptTokens: 1000,
+    }),
+  ];
+  const facts = instanceFacts(['--vllm-metrics']);
+  const stage = computeReport([], [], facts, { samples }).stages[2];
+  expect(stage.vllm).toEqual({
+    samplesRead: 4,
+    samplesFailed: 1,
+    runningMean: 30,
+    runningMax: 40,
+    waitingMean: 6,
+    waitingMax: 12,
+    cacheUsageMean: 0.5,
+    cacheUsageMax: 0.9,
+    promptTokensPerSecond: 0,
+    generationTokensPerSecond: 202.7,
+    prefixCacheHitRate: null,
+  });
+});
+
+test('a counter that went down leaves its rate absent, and one sample is too few for a rate', () => {
+  const facts = instanceFacts(['--vllm-metrics']);
+  const reset = computeReport([], [], facts, {
+    samples: [sample(40000, { generationTokens: 9000 }), sample(170000, { generationTokens: 200 })],
+  }).stages[0];
+  expect(reset.vllm?.generationTokensPerSecond).toBeNull();
+  const single = computeReport([], [], facts, { samples: [sample(40000, { generationTokens: 9000 })] }).stages[0];
+  expect(single.vllm?.generationTokensPerSecond).toBeNull();
+  expect(single.vllm?.waitingMean).toBeNull();
+});
+
+test('the prefix cache hit rate is the increase of hits over the increase of queries', () => {
+  const facts = instanceFacts(['--vllm-metrics']);
+  const stage = computeReport([], [], facts, {
+    samples: [
+      sample(40000, { prefixCacheQueries: 10000, prefixCacheHits: 6000 }),
+      sample(170000, { prefixCacheQueries: 30000, prefixCacheHits: 22000 }),
+    ],
+  }).stages[0];
+  expect(stage.vllm?.prefixCacheHitRate).toBe(0.8);
+});
+
+function probe(sentAtMs: number, roundTripMs: number, outcome: ProbeRecord['outcome'] = 'answered'): ProbeRecord {
+  return {
+    sentAtMs,
+    roundTripMs,
+    outcome,
+  };
+}
+
+test('the probe round trip of a stage is over its probes after warm-up', () => {
+  const probes = [
+    probe(10000, 5000),
+    ...[180, 190, 200, 210, 950].map((roundTripMs, index) => probe(40000 + index * 10000, roundTripMs)),
+    probe(100000, 10000, 'failed'),
+  ];
+  const stage = computeReport([], [], instanceFacts(['--probe']), { probes }).stages[0];
+  expect(stage.probe).toEqual({
+    probes: 6,
+    failed: 1,
+    roundTripP50Ms: 200,
+    roundTripP95Ms: 950,
+    roundTripMaxMs: 950,
+  });
+  const allFailed = computeReport([], [], instanceFacts(['--probe']), { probes: [probe(40000, 10000, 'failed')] });
+  expect(allFailed.stages[0].probe).toEqual({
+    probes: 1,
+    failed: 1,
+    roundTripP50Ms: null,
+    roundTripP95Ms: null,
+    roundTripMaxMs: null,
+  });
+});
+
+test('context-length rejections are counted apart and stay failed', () => {
+  const contextError = 'HTTP 400: This model\'s maximum context length is 8192 tokens. However, you requested 9120 tokens';
+  const records = [
+    ...many(194, 'answered'),
+    ...many(2, 'failed', { reason: contextError }),
+    ...many(1, 'failed', { reason: 'HTTP 502: ' + contextError }),
+    ...many(3, 'failed', { reason: 'HTTP 429: rate limited' }),
+  ];
+  expect(allOf(records)).toMatchObject({
+    requests: 200,
+    failedShare: 0.03,
+    contextLengthShare: 0.015,
+  });
+  const twoOfSix = [...many(194, 'answered'), ...many(2, 'failed', { reason: contextError }), ...many(4, 'failed')];
+  expect(allOf(twoOfSix)).toMatchObject({ failedShare: 0.03, contextLengthShare: 0.01 });
+});
+
+test('with a price each stage shows its cost per agent-hour, and the price is an assumed input', () => {
+  const report = computeReport([], [], instanceFacts(['--price', '1.43']));
+  expect(report.stages.map((stage) => stage.costPerAgentHour)).toEqual([0.143, 0.057, 0.029]);
+  expect(report.assumedInputs.at(-1)).toEqual({
+    flag: 'price',
+    value: 1.43,
+    isDefault: false,
+  });
+  const markdown = renderMarkdown(report);
+  expect(markdown).toContain('| 3 | 50 | $0.029 |');
+  expect(markdown).toContain('| --price | 1.43 | set |');
+});
+
+test('without the flags the report has no vLLM, probe or cost section', () => {
+  const report = computeReport(OUTCOME_MIX, [], ONE_STAGE, {
+    samples: [sample(40000, { running: 1 })],
+    probes: [probe(40000, 200)],
+  });
+  expect(report.stages[0]).toMatchObject({
+    vllm: null,
+    probe: null,
+    costPerAgentHour: null,
+  });
+  const markdown = renderMarkdown(report);
+  for (const heading of ['## vLLM', '## Probe', '## Cost']) {
+    expect(markdown).not.toContain(heading);
+  }
+});
+
+test('every vLLM, probe and cost figure in report.md matches report.json', () => {
+  const samples = [
+    sample(40000, {
+      waiting: 1,
+      running: 5,
+      cacheUsage: 0.25,
+      promptTokens: 0,
+      generationTokens: 0,
+    }),
+    sample(170000, {
+      waiting: 3,
+      running: 9,
+      cacheUsage: 0.35,
+      promptTokens: 390000,
+      generationTokens: 13000,
+    }),
+  ];
+  const probes = [probe(40000, 230), probe(50000, 260)];
+  const facts = instanceFacts(['--vllm-metrics', '--probe', '--price', '1.43']);
+  const report = computeReport(many(5, 'answered'), [], facts, { samples, probes });
+  const markdown = renderMarkdown(report);
+  const json = JSON.parse(renderJson(report)) as Report;
+  const percent = (value: number | null) => value === null ? '—' : (value * 100).toFixed(1) + '%';
+  const plain = (value: number | null) => value === null ? '—' : String(value);
+  for (const stage of json.stages) {
+    const vllm = stage.vllm;
+    expect(vllm).not.toBeNull();
+    const vllmRow = [
+      stage.stage,
+      stage.agents,
+      vllm?.samplesRead,
+      vllm?.samplesFailed,
+      plain(vllm?.runningMean ?? null),
+      plain(vllm?.runningMax ?? null),
+      plain(vllm?.waitingMean ?? null),
+      plain(vllm?.waitingMax ?? null),
+      percent(vllm?.cacheUsageMean ?? null),
+      percent(vllm?.cacheUsageMax ?? null),
+      plain(vllm?.promptTokensPerSecond ?? null),
+      plain(vllm?.generationTokensPerSecond ?? null),
+      percent(vllm?.prefixCacheHitRate ?? null),
+    ];
+    expect(markdown).toContain('| ' + vllmRow.join(' | ') + ' |');
+    const probeRow = [
+      stage.stage,
+      stage.agents,
+      stage.probe?.probes,
+      stage.probe?.failed,
+      plain(stage.probe?.roundTripP50Ms ?? null),
+      plain(stage.probe?.roundTripP95Ms ?? null),
+      plain(stage.probe?.roundTripMaxMs ?? null),
+      plain(stage.all.latencyP50Ms),
+    ];
+    expect(markdown).toContain('| ' + probeRow.join(' | ') + ' |');
+    expect(markdown).toContain('| ' + stage.stage + ' | ' + stage.agents + ' | $' + stage.costPerAgentHour?.toFixed(3) + ' |');
+  }
+  expect(json.stages[0].vllm?.promptTokensPerSecond).toBe(3000);
+  expect(markdown).toContain('Metrics not found: prefixCacheQueries.');
 });

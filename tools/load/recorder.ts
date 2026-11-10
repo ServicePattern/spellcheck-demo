@@ -102,6 +102,21 @@ export function createRecorder(folder: string, withTrace: boolean, placeOf: (sen
   };
 }
 
+export interface JsonLinesFile {
+  write(line: unknown): void;
+  close(): Promise<void>;
+}
+
+export function createJsonLinesFile(path: string): JsonLinesFile {
+  const stream = createWriteStream(path);
+  return {
+    write: (line) => {
+      stream.write(`${JSON.stringify(line)}\n`);
+    },
+    close: () => endStream(stream),
+  };
+}
+
 function endStream(stream: WriteStream): Promise<void> {
   return new Promise((resolve, reject) => {
     stream.once('error', reject);

@@ -3,8 +3,9 @@ import { join } from 'node:path';
 import { runAgent, type AgentEvent } from './agent.ts';
 import { messageScriptsOf, readChatSources, type ChatSources, type Language } from './chats.ts';
 import type { Clock } from './clock.ts';
+import { probeFetchOverHttp, runProbes, type ProbeFetch, type ProbeRecord } from './probe.ts';
 import { createRandomStream } from './random.ts';
-import { createRecorder, type RequestRecord, type StagePlace } from './recorder.ts';
+import { createJsonLinesFile, createRecorder, type RequestRecord, type StagePlace } from './recorder.ts';
 import {
   computeReport,
   renderJson,
@@ -17,10 +18,19 @@ import {
   type SourceCount,
   type SourcesFacts,
   type StagePlan,
+  type VllmFacts,
 } from './report.ts';
 import { parseSettings, type Settings } from './settings.ts';
-import { createTarget, type Target } from './targets.ts';
+import { createTarget, readLLMSettings, type LLMSettings, type Target } from './targets.ts';
 import { createTypingModel } from './typing-model.ts';
+import {
+  fetchTextOverHttp,
+  metricsUrlFor,
+  readMetricsBeforeRun,
+  runSampler,
+  type FetchText,
+  type MetricSample,
+} from './vllm-metrics.ts';
 
 export interface RepositoryFacts {
   commit: string;
@@ -36,6 +46,8 @@ export interface LoadRunInput {
   repository: RepositoryFacts;
   interruptSignal?: AbortSignal;
   log: (line: string) => void;
+  fetchText?: FetchText;
+  probeFetch?: ProbeFetch;
 }
 
 export interface LoadRunResult {
@@ -46,6 +58,8 @@ export interface LoadRunResult {
 
 export const REPORT_MARKDOWN_FILE = 'report.md';
 export const REPORT_JSON_FILE = 'report.json';
+export const METRICS_FILE = 'metrics.jsonl';
+export const PROBE_FILE = 'probe.jsonl';
 const MAX_START_SPREAD_MS = 30000;
 
 type StopReason = Exclude<EndReason, 'completed'> | 'end';
@@ -55,6 +69,8 @@ interface RunSetup {
   settings: Settings;
   sources: ChatSources;
   target: Target;
+  llm: LLMSettings | undefined;
+  vllm: VllmFacts | null;
 }
 
 interface StagesDone {
@@ -63,17 +79,24 @@ interface StagesDone {
   activity: ActivityEvent[];
   stagePlans: StagePlan[];
   stopReason: StopReason;
+  samples: MetricSample[];
+  probes: ProbeRecord[];
 }
 
 export async function runLoad(input: LoadRunInput): Promise<LoadRunResult> {
   const settings = parseSettings(input.args);
   const sources = await readChatSources(settings.run.chatsFolder);
+  const isWatchingInstance = settings.run.withVllmMetrics || settings.run.withProbe;
+  const llm = isWatchingInstance ? readLLMSettings(settings.run, input.environment) : undefined;
+  const vllm = llm && settings.run.withVllmMetrics ? await checkMetrics(input, llm, settings.run.metricsUrl) : null;
   const target = await createTarget(settings.run, input.environment, input.clock, settings.typing.timeoutMs);
   const setup: RunSetup = {
     input,
     settings,
     sources,
     target,
+    llm,
+    vllm,
   };
   const sent = { count: 0 };
   let stagesDone: StagesDone;
@@ -83,6 +106,54 @@ export async function runLoad(input: LoadRunInput): Promise<LoadRunResult> {
     await target.finish?.(sent.count);
   }
   return writeReport(setup, stagesDone, sent.count);
+}
+
+async function checkMetrics(input: LoadRunInput, llm: LLMSettings, metricsUrl: string | undefined): Promise<VllmFacts> {
+  const url = metricsUrlFor(llm.url, metricsUrl);
+  const reading = await readMetricsBeforeRun(url, input.clock, input.fetchText ?? fetchTextOverHttp);
+  return {
+    metricsUrl: url,
+    metricsNotFound: reading.notFound,
+    namesUsed: reading.namesUsed,
+  };
+}
+
+function watchInstance(setup: RunSetup, folder: string, stopSignal: AbortSignal) {
+  const { input, llm, vllm } = setup;
+  const samples: MetricSample[] = [];
+  const probes: ProbeRecord[] = [];
+  const watchers: Promise<void>[] = [];
+  if (vllm) {
+    const file = createJsonLinesFile(join(folder, METRICS_FILE));
+    watchers.push(runSampler({
+      url: vllm.metricsUrl,
+      clock: input.clock,
+      stopSignal,
+      fetchText: input.fetchText ?? fetchTextOverHttp,
+      onSample: (sample) => {
+        samples.push(sample);
+        file.write(sample);
+      },
+    }).finally(() => file.close()));
+  }
+  if (llm && setup.settings.run.withProbe) {
+    const file = createJsonLinesFile(join(folder, PROBE_FILE));
+    watchers.push(runProbes({
+      llm,
+      clock: input.clock,
+      stopSignal,
+      probeFetch: input.probeFetch ?? probeFetchOverHttp,
+      onProbe: (probe) => {
+        probes.push(probe);
+        file.write(probe);
+      },
+    }).finally(() => file.close()));
+  }
+  return {
+    samples,
+    probes,
+    watching: Promise.all(watchers),
+  };
 }
 
 async function runStagesOnTarget(setup: RunSetup, sent: { count: number }): Promise<StagesDone> {
@@ -171,9 +242,12 @@ async function runStagesOnTarget(setup: RunSetup, sent: { count: number }): Prom
       onEvent,
     });
   };
-  await Promise.all([runStages(), input.driveClock()]);
+  const instance = watchInstance(setup, folder, stop.signal);
+  await Promise.all([runStages(), instance.watching, input.driveClock()]);
   await recorder.close();
   return {
+    samples: instance.samples,
+    probes: instance.probes,
     folder,
     records: recorder.records,
     activity,
@@ -199,7 +273,12 @@ async function writeReport(setup: RunSetup, stagesDone: StagesDone, sentRequests
     hasUncommittedChanges: input.repository.hasUncommittedChanges,
     stages: stagesDone.stagePlans,
     server: targetFacts?.server ?? null,
-  }, targetFacts?.upstreamCalls);
+    vllm: setup.vllm,
+  }, {
+    upstreamCalls: targetFacts?.upstreamCalls,
+    samples: stagesDone.samples,
+    probes: stagesDone.probes,
+  });
   await writeFile(join(folder, REPORT_MARKDOWN_FILE), renderMarkdown(report));
   await writeFile(join(folder, REPORT_JSON_FILE), renderJson(report));
   input.log(`\n${stageTable(report, (stage) => stage.all)}\n`);
