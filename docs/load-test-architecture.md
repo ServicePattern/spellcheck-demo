@@ -245,6 +245,24 @@ The rule-by-rule comparison with `check-while-typing.ts` is under [The agent aga
 
 On the virtual clock, 20 agents for 30 minutes on the real chat sources (seeds 1 to 3): gap between one agent's rounds p25 5.4 s, p50 8.6–9.1 s, p75 16–17 s; allowed time p50 0.85 s; 62–63% of the time on a message. The telemetry gap was 2.8 s, 5.7 s and 15.3 s, from a prototype that triggers differently. Spreads alone bring the median to about 7 s at best while shortening the tail; `--burst-words 2` gives a median of 6.6 s. The defaults are left as the spec sets them.
 
+### Trial against a hosted model (2026-11-10)
+
+`npm run load -- --agents 3 --stage 180 --max-requests 300`, target `llm` with `gemini-3.5-flash-lite` through Gemini's OpenAI-compatible endpoint (`generativelanguage.googleapis.com`), seed 1, commit `7bc38ac`, every typing input at its default (assumed, not measured: `--debounce-ms 1000`, `--timeout-ms 20000`, `--wpm 40`, `--burst-words 3`, `--pause-ms 1800`, `--accept-share 0.26`, `--spell-check-only-share 0.1`, `--typo-every 15`, `--between-messages-ms 20000`, `--arabic-share 0.5`). The seed made agents 1 and 2 Arabic and agent 3 English.
+
+| Stage | Agents | Requests | Rounds/s | Useful answers | Aborted | Timeout | Failed | Unreadable | p50 ms | p95 ms | p99 ms | Empty completions | In flight mean | In flight max |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 3 | 65 | 0.22 | 53.8% | 46.2% | 0.0% | 0.0% | 0.0% | 718 | 912 | 1045 | 0.0% | 0.2 | 4 |
+
+79 requests were sent (14 in warm-up); the cap was not reached. Typing produced: gap between rounds p25 4.3 s, p50 6.0 s, p75 12.9 s; allowed time p25 0.45 s, p50 0.82 s, p75 1.64 s.
+
+What it showed about the loader, not about capacity:
+
+- The endpoint takes the server's request form unchanged (`response_format: json_object`, temperature 0.2): no `failed` and no `unreadable` answer, so there were no reasons to read.
+- Aborts come from the typing model, not from the model's speed. Every aborted request had under 1 s of allowed time (41 to 1002 ms), and answers took 0.7 to 1 s. With the default pause (median 1.8 s) the time a request gets is the pause less the 1 s debounce, median 0.8 s, so about half the requests cannot be useful even with an idle model. The useful answer rate under load should be read against this floor, and the pause input is the one most worth measuring.
+- Spell check reported a mistake in 2 of 20 answered drafts: at one typo per 15 words most drafts at a round hold none yet. Answers were short (median 16 characters for spell check, 51 for auto-completion).
+- No auto-completion came back empty, against 10% from the fake.
+- Run folders hold no key; the commit and the clean tree were recorded.
+
 ## Running it
 
 ```sh

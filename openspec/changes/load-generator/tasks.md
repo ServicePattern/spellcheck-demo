@@ -49,6 +49,6 @@
 
 ## 8. Trial against a hosted model (spends money: run by a person)
 
-- [ ] 8.1 **Costs a few cents; a person runs it.** Put the Gemini settings in the git-ignored `.env` (`LLM_API_KEY`, `MODEL`, `LLM_URL` of its OpenAI-compatible chat completions endpoint), then `npm run load -- --agents 3 --stage 180 --max-requests 300`; verify the run folder is written, most counted requests are `answered` or `aborted`, and any `failed` or `unreadable` share has its reasons read from the record
-- [ ] 8.2 Write the trial's outcome into `docs/load-test-architecture.md`: the date, the model, the settings, the stage table, and what it showed about the loader (not about capacity); verify the section names which inputs were assumed
-- [ ] 8.3 Run `npm run typecheck` and `npm test`; verify both pass. No instance was rented in this change, so there is nothing to destroy
+- [x] 8.1 **Costs a few cents; a person runs it.** Put the Gemini settings in the git-ignored `.env` (`LLM_API_KEY`, `MODEL`, `LLM_URL` of its OpenAI-compatible chat completions endpoint), then `npm run load -- --agents 3 --stage 180 --max-requests 300`; verify the run folder is written, most counted requests are `answered` or `aborted`, and any `failed` or `unreadable` share has its reasons read from the record
+- [x] 8.2 Write the trial's outcome into `docs/load-test-architecture.md`: the date, the model, the settings, the stage table, and what it showed about the loader (not about capacity); verify the section names which inputs were assumed
+- [x] 8.3 Run `npm run typecheck` and `npm test`; verify both pass. No instance was rented in this change, so there is nothing to destroy
