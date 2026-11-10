@@ -15,9 +15,9 @@
 
 ## 3. Typing model and typos
 
-- [ ] 3.1 Implement `tools/load/settings.ts`: every flag of the load-agent and load-run specs with its default, parsing, and validation (shares in 0–1, positive durations and counts, rising `--agents`, `--warmup` below `--stage`); verify with `settings.spec.ts` for defaults, each kind of bad value, and the named flag in each error
-- [ ] 3.2 Implement `tools/load/typos.ts`: swap, drop or double one letter in words of four or more letters without digits, English and Arabic; verify with `typos.spec.ts` (English word, Arabic word, `SI-48213` untouched, short word untouched, same seed gives the same variant)
-- [ ] 3.3 Implement `tools/load/typing-model.ts`: per-agent speed within ±25%, words per burst, pause, time between messages, spell-check-only and accept draws, the agent's language; verify with `typing-model.spec.ts` that draws repeat for a seed, differ across seeds, agents 1 and 2 are the same whether 2 or 5 agents exist, and medians over many draws land near the settings
+- [x] 3.1 Implement `tools/load/settings.ts`: every flag of the load-agent and load-run specs with its default, parsing, and validation (shares in 0–1, positive durations and counts, rising `--agents`, `--warmup` below `--stage`); verify with `settings.spec.ts` for defaults, each kind of bad value, and the named flag in each error
+- [x] 3.2 Implement `tools/load/typos.ts`: swap, drop or double one letter in words of four or more letters without digits, English and Arabic; verify with `typos.spec.ts` (English word, Arabic word, `SI-48213` untouched, short word untouched, same seed gives the same variant)
+- [x] 3.3 Implement `tools/load/typing-model.ts`: per-agent speed within ±25%, words per burst, pause, time between messages, spell-check-only and accept draws, the agent's language; verify with `typing-model.spec.ts` that draws repeat for a seed, differ across seeds, agents 1 and 2 are the same whether 2 or 5 agents exist, and medians over many draws land near the settings
 
 ## 4. Clock and targets
 

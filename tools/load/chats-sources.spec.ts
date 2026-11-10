@@ -9,9 +9,11 @@ test('the real chat sources give 137 English and 173 Arabic agent turns', async 
   );
   const { files, conversations } = await readChatSources(DEFAULT_CHATS_FOLDER);
   expect(files).toEqual(['support-ar.txt', 'support-en.txt']);
-  const scriptsOf = (language: string) => conversations
-    .filter((conversation) => conversation.language === language)
-    .flatMap(messageScriptsOf);
+  const scriptsOf = (language: string) => {
+    return conversations
+      .filter((conversation) => conversation.language === language)
+      .flatMap(messageScriptsOf);
+  };
   expect(scriptsOf('English')).toHaveLength(137);
   expect(scriptsOf('Arabic')).toHaveLength(173);
 });
